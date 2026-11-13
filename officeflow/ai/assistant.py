@@ -404,11 +404,17 @@ def log_file():
     return paths.app_home() / "ai_activity.jsonl"
 
 
-def record(kind: str, model: str, sent: str, outcome: str, usage: dict[str, int] | None = None) -> None:
-    """Keep, on this computer, exactly what was sent to the AI service."""
+def record(kind: str, model: str, sent: str, outcome: str, usage: dict[str, int] | None = None,
+           answer: dict[str, Any] | None = None) -> None:
+    """Keep, on this computer, exactly what was sent to the AI service — and its answer,
+    so a proposed workflow or plugin can be reopened later."""
+    kept = None
+    if answer:
+        kept = {k: answer[k] for k in ("kind", "name", "explanation", "workflow", "notes", "missing_tools",
+                                       "file_name", "code", "check") if k in answer}
     entry = {"time": datetime.now().isoformat(timespec="seconds"), "kind": kind, "model": model,
              "sent_request": sent, "also_sent": "the OfficeFlow tool catalog / plugin instructions (no user data)",
-             "outcome": outcome, "usage": usage or {}}
+             "outcome": outcome, "usage": usage or {}, "answer": kept}
     with open(log_file(), "a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 

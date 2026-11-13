@@ -113,9 +113,13 @@ try {
   check((await page.$$(".flow-node")).length === 3, "AI draft opens in the builder");
   await page.waitForTimeout(500);
   await shot(page, "ai-builder");
-  await page.goto(`${base}/assistant/?mode=plugin`);
-  await page.waitForSelector(".prompt");
-  await page.fill(".prompt", "A tool that counts PDF pages");
+  // Back on the assistant page the proposed workflow is still there; create the missing tool from it.
+  await page.goto(`${base}/assistant/`);
+  await page.waitForSelector("text=Missing tool: OCR");
+  check(true, "the proposed workflow is kept when coming back to the assistant");
+  await page.click("button:has-text('Create this tool')");
+  await page.waitForSelector("text=Workflow waiting for a new tool");
+  check((await page.inputValue(".prompt")).startsWith("OCR:"), "the missing tool's description becomes the plugin request");
   await page.click("button:has-text('Review before sending')");
   await page.click(".sendbox button.primary");
   await page.waitForSelector("text=Safety check passed", { timeout: 20000 });
@@ -124,7 +128,18 @@ try {
   await shot(page, "ai-plugin");
   await page.click("button:has-text('Install plugin')");
   await page.waitForSelector("text=Plugin installed");
-  await page.click("button:has-text('Open Count pages')");
+  await page.waitForSelector("text=Continue your workflow");
+  await shot(page, "ai-continue");
+  await page.click("button:has-text('Rebuild the workflow with the new tool')");
+  await page.waitForSelector(".sendbox pre");
+  check((await page.textContent(".sendbox pre")).includes("Sort the PDFs in <path-1>"),
+    "rebuilding brings back the original workflow request for review");
+  await page.goto(`${base}/assistant/`);
+  await page.waitForSelector(".activity");
+  await page.click(".activity >> nth=1");
+  await page.waitForSelector(".activity button:has-text('Open in Workflow Builder')");
+  check(true, "an earlier workflow can be reopened from Activity");
+  await page.goto(`${base}/tool/?id=pdf.count_pages_test`);
   await page.waitForSelector("h1:has-text('Count pages')");
   check(true, "AI-written tool installed and opened");
   await page.goto(`${base}/assistant/`);

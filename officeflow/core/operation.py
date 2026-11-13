@@ -131,6 +131,7 @@ class OperationContext:
         self._progress = progress
         self.cancel_event = cancel_event or threading.Event()
         self.log = logger or logging.getLogger("officeflow.operation")
+        self.exclude_roots: list[Path] = []   # folders whose files are never taken as inputs
         self._taken: set[Path] = set()
 
     def progress(self, done: int, total: int, message: str = "") -> None:

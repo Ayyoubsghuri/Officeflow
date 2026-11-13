@@ -148,6 +148,29 @@ function PluginResult({ answer, onInstalled }: { answer: AiAnswer; onInstalled(i
   );
 }
 
+interface Pending {
+  request: string;
+  answer: AiAnswer;
+}
+
+function load<T>(key: string): T | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function store(key: string, value: unknown) {
+  try {
+    if (value === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable: the Activity list still keeps every answer */
+  }
+}
+
 function Assistant() {
   const { op, refreshMeta, saveSettings, settings, toast } = useApp();
   const router = useRouter();
@@ -158,25 +181,67 @@ function Assistant() {
   const [preview, setPreview] = useState<AiPreview | null>(null);
   const [activity, setActivity] = useState<AiActivity[]>([]);
   const [installed, setInstalled] = useState<string[]>([]);
+  const [shown, setShown] = useState<AiAnswer | null>(null);       // answer on screen
+  const [pending, setPending] = useState<Pending | null>(null);    // workflow waiting for a new tool
+  const [sentRequest, setSentRequest] = useState("");
   const { job, error, start } = useJob();
 
   const loadActivity = useCallback(() => api<AiActivity[]>("GET", "/api/ai/activity").then(setActivity).catch(() => {}), []);
   useEffect(() => {
     api<AiStatus>("GET", "/api/ai/status").then(setStatus).catch(() => {});
     loadActivity();
+    // Coming back to this page keeps the last answer and any workflow waiting for a tool.
+    const last = load<{ answer: AiAnswer; request: string }>("officeflow-ai-last");
+    if (last && !params.get("q")) { setShown(last.answer); setSentRequest(last.request); }
+    setPending(load<Pending>("officeflow-ai-pending"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadActivity]);
-  useEffect(() => { if (job && job.state !== "running") loadActivity(); }, [job, loadActivity]);
 
-  const review = async () => {
-    if (!request.trim()) return toast("Describe what you want first.", "error");
-    setPreview(await api<AiPreview>("POST", "/api/ai/preview", { kind: mode, request }));
+  useEffect(() => {
+    if (!job || job.state === "running") return;
+    loadActivity();
+    if (job.state === "done" && job.result) {
+      const answer = job.result as unknown as AiAnswer;
+      setShown(answer);
+      store("officeflow-ai-last", { answer, request: sentRequest });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.state]);
+
+  const review = async (m: Mode = mode, text: string = request) => {
+    if (!text.trim()) return toast("Describe what you want first.", "error");
+    setPreview(await api<AiPreview>("POST", "/api/ai/preview", { kind: m, request: text }));
   };
   const send = () => {
     setInstalled([]);
+    setShown(null);
+    setSentRequest(request);
     start({ kind: mode, request }, mode === "workflow" ? "AI · designing a workflow" : "AI · writing a tool", "/api/ai/jobs");
     setPreview(null);
   };
-  const answer = job?.state === "done" ? (job.result as unknown as AiAnswer) : null;
+  const openDraft = (workflow: AiAnswer["workflow"]) => {
+    sessionStorage.setItem("officeflow-ai-draft", JSON.stringify(workflow));
+    router.push("/workflow/?draft=ai");
+  };
+  const createMissingTool = (text: string, from: AiAnswer) => {
+    const waiting = { request: sentRequest || request, answer: from };
+    setPending(waiting);
+    store("officeflow-ai-pending", waiting);
+    setMode("plugin");
+    setRequest(text);
+    setPreview(null);
+    window.scrollTo(0, 0);
+  };
+  const continueWorkflow = () => {
+    if (!pending) return;
+    setMode("workflow");
+    setRequest(pending.request);
+    setInstalled([]);
+    setShown(null);
+    setPending(null);
+    store("officeflow-ai-pending", null);
+    review("workflow", pending.request);            // the request is reviewed again before it is sent
+  };
   const running = job?.state === "running";
 
   return (
@@ -192,6 +257,17 @@ function Assistant() {
           <Link className="btn primary" href="/settings/#ai"><Icon name="key" size={17} />Connect {status.provider_label}</Link>
         ))}
       </div>
+
+      {pending && (
+        <div className="banner">
+          <div className="row">
+            <Icon name="workflow" size={18} />
+            <div className="grow"><b>Workflow waiting for a new tool:</b> “{pending.answer.name}”. Create and install the tool, then rebuild the workflow so it uses it.</div>
+            <button className="btn" onClick={() => openDraft(pending.answer.workflow)}><Icon name="arrow" size={16} />Open the draft as it is</button>
+            <button className="btn ghost" title="Forget this workflow" onClick={() => { setPending(null); store("officeflow-ai-pending", null); }}><Icon name="x" size={16} /></button>
+          </div>
+        </div>
+      )}
 
       <div className="assistant">
         <div className="col" style={{ gap: 18, minWidth: 0 }}>
@@ -212,7 +288,7 @@ function Assistant() {
               ))}
             </div>
             <div className="row">
-              <button className="btn primary" disabled={!status?.configured || running} onClick={review}><Icon name="eye" size={17} />Review before sending</button>
+              <button className="btn primary" disabled={!status?.configured || running} onClick={() => review()}><Icon name="eye" size={17} />Review before sending</button>
               {!status?.configured && <span className="muted" style={{ fontSize: 13 }}>Add an API key in Settings first.</span>}
             </div>
             <AnimatePresence>
@@ -235,30 +311,38 @@ function Assistant() {
             </AnimatePresence>
           </div>
 
-          {(running || answer || error || job?.state === "error") && (
+          {(running || shown || error || job?.state === "error") && (
             <div className="card pad">
               {running && <div className="row"><span className="spin dark" /><span>{mode === "workflow" ? "Designing your workflow…" : "Writing your tool and checking it…"} {job?.elapsed ? `${Math.round(job.elapsed)} s` : ""}</span></div>}
-              {(error || job?.state === "error") && <div className="banner failed"><b>Could not complete</b><div>{error || job?.error}</div></div>}
-              {answer?.kind === "workflow" && (
-                <WorkflowResult answer={answer} ops={op}
-                  onOpen={() => {
-                    sessionStorage.setItem("officeflow-ai-draft", JSON.stringify(answer.workflow));
-                    router.push("/workflow/?draft=ai");
-                  }}
-                  onCreateTool={(text) => { setMode("plugin"); setRequest(text); window.scrollTo(0, 0); }} />
+              {!running && (error || job?.state === "error") && <div className="banner failed"><b>Could not complete</b><div>{error || job?.error}</div></div>}
+              {!running && shown?.kind === "workflow" && (
+                <WorkflowResult answer={shown} ops={op} onOpen={() => openDraft(shown.workflow)}
+                  onCreateTool={(text) => createMissingTool(text, shown)} />
               )}
-              {answer?.kind === "plugin" && !installed.length && (
-                <PluginResult answer={answer} onInstalled={(ids) => { setInstalled(ids); refreshMeta(); }} />
+              {!running && shown?.kind === "plugin" && !installed.length && (
+                <PluginResult answer={shown} onInstalled={(ids) => { setInstalled(ids); refreshMeta(); }} />
               )}
               {installed.length > 0 && (
-                <div className="banner success">
-                  <b>Plugin installed.</b> It is now in its toolbox and in the Workflow Builder.
-                  <div className="row" style={{ marginTop: 10 }}>
-                    {installed.map((id) => <button key={id} className="btn" onClick={() => router.push(`/tool/?id=${id}`)}><Icon name="arrow" size={16} />Open {op(id)?.name ?? id}</button>)}
+                <div className="col" style={{ gap: 12 }}>
+                  <div className="banner success">
+                    <b>Plugin installed.</b> It is now in its toolbox and in the Workflow Builder.
+                    <div className="row" style={{ marginTop: 10 }}>
+                      {installed.map((id) => <button key={id} className="btn" onClick={() => router.push(`/tool/?id=${id}`)}><Icon name="arrow" size={16} />Open {op(id)?.name ?? id}</button>)}
+                    </div>
                   </div>
+                  {pending && (
+                    <div className="banner">
+                      <b>Continue your workflow “{pending.answer.name}”</b>
+                      <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>Rebuild it so it uses the new tool (your request is shown again before it is sent), or open the earlier draft without it.</div>
+                      <div className="row" style={{ marginTop: 10 }}>
+                        <button className="btn primary" onClick={continueWorkflow}><Icon name="sparkle" size={16} />Rebuild the workflow with the new tool</button>
+                        <button className="btn" onClick={() => openDraft(pending.answer.workflow)}><Icon name="workflow" size={16} />Open the previous draft</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
-              {answer && <div className="faint" style={{ fontSize: 12, marginTop: 12 }}>{answer.usage.input_tokens + answer.usage.output_tokens} tokens · {answer.rounds} round{answer.rounds > 1 ? "s" : ""} (OfficeFlow checks every answer and asks for fixes automatically)</div>}
+              {!running && shown?.usage && <div className="faint" style={{ fontSize: 12, marginTop: 12 }}>{shown.usage.input_tokens + shown.usage.output_tokens} tokens · {shown.rounds} round{shown.rounds > 1 ? "s" : ""} (OfficeFlow checks every answer and asks for fixes automatically)</div>}
             </div>
           )}
         </div>
@@ -267,13 +351,24 @@ function Assistant() {
           <Privacy status={status} redact={settings?.ai_redact ?? true} onRedact={(v) => saveSettings({ ai_redact: v })} />
           <div className="card pad col" style={{ gap: 10 }}>
             <div className="h2">Activity</div>
-            <div className="help" style={{ marginTop: 0 }}>Kept on this computer: exactly what was sent each time.</div>
+            <div className="help" style={{ marginTop: 0 }}>Kept on this computer: what was sent each time, and the answer — open any earlier workflow or tool again.</div>
             {activity.length === 0 && <div className="muted">Nothing sent yet.</div>}
-            {activity.slice(0, 8).map((entry, i) => (
+            {activity.slice(0, 12).map((entry, i) => (
               <details key={i} className="activity">
                 <summary><span className="tag">{entry.kind}</span> <span className="ellipsis">{entry.outcome}</span></summary>
                 <div className="faint" style={{ fontSize: 12 }}>{new Date(entry.time).toLocaleString()} · {entry.model}</div>
                 <pre className="selectable">{entry.sent_request}</pre>
+                {entry.answer?.workflow && (
+                  <div className="row" style={{ marginTop: 8, flexWrap: "wrap" }}>
+                    <button className="btn" onClick={() => openDraft(entry.answer!.workflow)}><Icon name="workflow" size={16} />Open in Workflow Builder</button>
+                    <button className="btn ghost" onClick={() => { setShown(entry.answer as AiAnswer); setInstalled([]); window.scrollTo(0, 0); }}>Show</button>
+                  </div>
+                )}
+                {entry.answer?.code && (
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <button className="btn" onClick={() => { setShown(entry.answer as AiAnswer); setInstalled([]); window.scrollTo(0, 0); }}><Icon name="code" size={16} />Show the tool</button>
+                  </div>
+                )}
               </details>
             ))}
           </div>

@@ -215,6 +215,7 @@ def test_ai_job_sends_redacted_text_and_logs_it_locally(client):
     assert fake.calls[0]["messages"][0]["content"] == "Sort <path-1> by reference"
     log = client.get("/api/ai/activity").json()[0]
     assert log["sent_request"] == "Sort <path-1> by reference" and log["kind"] == "workflow"
+    assert log["answer"]["workflow"]["steps"][0]["op"] == "pdf.organize"     # kept to reopen later
     assert "D:\\Scans" not in json.dumps(log)
 
 

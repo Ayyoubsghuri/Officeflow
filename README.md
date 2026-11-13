@@ -119,6 +119,11 @@ first step, and each step passes its output files to the next.
 - Drag nodes, pan the canvas, zoom with the wheel or the left tool bar, tidy the layout, undo/redo every
   change (Ctrl+Z / Ctrl+Shift+Z), Delete removes the selected step, Ctrl+S saves.
 - After a run each node shows Done / Remarks / Failed / Not run and how many files it produced.
+- **Only the final result is saved**, in one folder named after the workflow (`Monthly invoices`,
+  `Monthly invoices (2)` for the next run…). The files of earlier steps are worked on in a temporary folder
+  that is deleted at the end. Tick **Keep intermediate files** to keep them under `Intermediate steps`
+  inside the result folder. A step set to *move* files may only be the last step unless intermediate files
+  are kept (otherwise the moved originals would be deleted with the temporary files).
 - Saved workflows open from the dashboard or the builder; the badge shows **Draft** until saved.
 
 ## AI assistant (optional)
@@ -135,7 +140,10 @@ things only:
 - **Create a workflow** from a description. The answer is checked against the real tool list (tool ids,
   settings, and that every step can read the previous step's files); problems are sent back for a fix
   automatically. The result opens in the Workflow Builder as an unsaved draft — it is never run by itself.
-  If a needed tool does not exist, the assistant names it and offers to create it.
+  If a needed tool does not exist, the assistant names it and offers to create it; after the new tool is
+  installed, **Rebuild the workflow with the new tool** sends your original request again (after review) or
+  **Open the previous draft** opens the first proposal. Every answer is kept locally in **Activity**, so an
+  earlier workflow or tool can always be reopened.
 - **Create a tool (plugin)** from a description. The code is checked statically before you see it: only
   an allow-list of offline libraries (no networking, no launching programs, no `eval`/`exec`, no dynamic
   imports), a valid tool definition, no replacing built-in tools. You read the code, tick “I have read this

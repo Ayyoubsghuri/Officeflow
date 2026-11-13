@@ -107,6 +107,7 @@ export interface AiActivity {
   also_sent: string;
   outcome: string;
   usage: { input_tokens?: number; output_tokens?: number };
+  answer?: Partial<AiAnswer> | null;
 }
 
 export interface PluginFile {
@@ -165,6 +166,7 @@ export interface Result {
   output_count: number;
   reports: string[];
   steps?: { name: string; status: Status; summary: string; outputs: number }[];
+  result_dir?: string;
 }
 
 export interface JobState {

@@ -26,7 +26,7 @@ export function ResultView({ job, error, maxRows = 400 }: { job: JobState | null
         <div className="row">
           <b className="grow">{TITLES[r.status] ?? r.status}</b>
           {r.status !== "failed" && r.status !== "info" && (
-            <button className="btn" onClick={() => openPath(job.output_dir)}><Icon name="folder" size={16} />Open output folder</button>
+            <button className="btn" onClick={() => openPath(r.result_dir || job.output_dir)}><Icon name="folder" size={16} />Open output folder</button>
           )}
         </div>
         <div style={{ marginTop: 6 }}>{r.summary}</div>
@@ -66,9 +66,11 @@ export function Progress({ job }: { job: JobState | null }) {
   );
 }
 
-export default function RunPanel({ outputDir, onOutputDir, recursive, onRecursive, onPreview, onRun, onCancel, job, error, runLabel = "Run" }: {
+export default function RunPanel({ outputDir, onOutputDir, recursive, onRecursive, onPreview, onRun, onCancel, job, error, runLabel = "Run",
+  keepIntermediate, onKeepIntermediate }: {
   outputDir: string; onOutputDir(v: string): void;
   recursive: boolean; onRecursive(v: boolean): void;
+  keepIntermediate?: boolean; onKeepIntermediate?(v: boolean): void;
   onPreview?(): void; onRun(): void; onCancel(): void;
   job: JobState | null; error: string; runLabel?: string;
 }) {
@@ -89,6 +91,12 @@ export default function RunPanel({ outputDir, onOutputDir, recursive, onRecursiv
         <div className="help">Results are written here. Your original files are never modified and existing files are never overwritten.</div>
       </div>
       <Check on={recursive} label="Include files in sub-folders" onChange={onRecursive} />
+      {onKeepIntermediate && (
+        <>
+          <Check on={!!keepIntermediate} label="Keep intermediate files of each step" onChange={onKeepIntermediate} />
+          <div className="help" style={{ marginTop: -8 }}>Off: only the final result is saved, in one folder named after the workflow.</div>
+        </>
+      )}
       <div className="row">
         {onPreview && <button className="btn" disabled={running} onClick={onPreview}><Icon name="eye" size={17} />Preview</button>}
         <button className="btn primary" disabled={running} onClick={onRun}><Icon name="play" size={16} />{runLabel}</button>

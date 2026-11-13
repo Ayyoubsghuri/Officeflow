@@ -101,8 +101,10 @@ def test_workflow_chains_outputs_into_next_step(tmp_path):
     outcome = run_workflow(again, [tmp_path / "in"], ctx, db=db)
     assert outcome.status == "success", outcome.summary
     assert pd.read_excel(outcome.outputs[0]).to_dict("list") == {"Ref": ["A", "B"], "V": [1, 3]}
-    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [
-        "01 Merge Excel files", "02 Clean and normalize data", "03 Remove duplicates"]
+    # only the final result is kept, in one folder named after the workflow
+    assert [p.name for p in (tmp_path / "out").iterdir()] == ["Monthly"]
+    assert [p.name for p in (tmp_path / "out" / "Monthly").iterdir()] == [outcome.outputs[0].name]
+    assert outcome.result_dir == tmp_path / "out" / "Monthly"
     assert seen[-1][0] == seen[-1][1] and seen[-1][2].startswith("Step 3/3")
     assert db.list_runs()[0].kind == "workflow" and len(db.list_runs()) == 1
 
@@ -123,3 +125,32 @@ def test_workflow_validation_and_incompatible_steps(tmp_path):
     assert not (tmp_path / "out").exists()
     too_few = run_workflow(Workflow("w", [Step("pdf.pages", {"pages": "1"}), Step("pdf.merge")]), [pdf], ctx)
     assert too_few.status == "failed" and "Step 2/2 · Merge PDFs failed" in too_few.summary
+
+
+def test_workflow_keeps_intermediate_files_only_when_asked(tmp_path):
+    make_xlsx(tmp_path / "in" / "a.xlsx", [{"Ref": "A"}])
+    workflow = Workflow("Tidy", [Step("excel.clean"), Step("excel.remove_duplicates", {"save_removed": False})])
+    first = run_workflow(workflow, [tmp_path / "in"], OperationContext(tmp_path / "out"))
+    kept = run_workflow(workflow, [tmp_path / "in"], OperationContext(tmp_path / "out"), keep_intermediate=True)
+    assert first.status == kept.status == "success"
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["Tidy", "Tidy (2)"]   # runs never mix
+    assert sorted(p.name for p in kept.result_dir.iterdir()) == ["Intermediate steps", "a - clean - no duplicates.xlsx"]
+    assert [p.name for p in (kept.result_dir / "Intermediate steps").iterdir()] == ["01 Clean and normalize data"]
+
+
+def test_workflow_refuses_to_move_files_into_temporary_steps(tmp_path):
+    pdf = make_pdf(tmp_path / "in" / "a.pdf", ["Ref 2024/01/005"])
+    workflow = Workflow("Sort", [Step("pdf.organize", {"move": True}), Step("pdf.text")])
+    outcome = run_workflow(workflow, [tmp_path / "in"], OperationContext(tmp_path / "out"))
+    assert outcome.status == "failed" and "Only the last step may move files" in outcome.summary
+    assert pdf.exists() and not (tmp_path / "out").exists()
+
+
+def test_workflow_with_output_inside_source_ignores_earlier_results(tmp_path):
+    source = tmp_path / "docs"
+    make_pdf(source / "a.pdf", ["x"])
+    workflow = Workflow("Text", [Step("pdf.pages", {"pages": "1"}), Step("pdf.text")])
+    for _ in range(2):
+        outcome = run_workflow(workflow, [source], OperationContext(source / "results"))
+    assert outcome.status == "success" and outcome.steps[0][1].input_count == 1
+    assert sorted(p.name for p in (source / "results").iterdir()) == ["Text", "Text (2)"]

@@ -89,6 +89,8 @@ def test_workflow_job_and_saved_workflows(client, tmp_path):
     state = wait(client, job)
     assert state["result"]["status"] == "success"
     assert [s["status"] for s in state["result"]["steps"]] == ["success", "success"]
+    assert state["result"]["result_dir"] == str(tmp_path / "out" / "Tidy")
+    assert [p.name for p in (tmp_path / "out").iterdir()] == ["Tidy"]
     client.delete("/api/workflows/Tidy")
     assert client.get("/api/workflows").json() == []
 

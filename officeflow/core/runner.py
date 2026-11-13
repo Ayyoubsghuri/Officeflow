@@ -38,15 +38,18 @@ class RunOutcome:
 
 def prepare(
     op: Operation, raw_inputs: Sequence[Path | str], raw_params: Mapping[str, Any] | None,
-    recursive: bool = True, output_dir: Path | None = None,
+    recursive: bool = True, output_dir: Path | None = None, exclude: Sequence[Path] = (),
 ) -> tuple[list[Path], dict[str, Any]]:
     params = op.clean_params(raw_params)
     inputs = collect_files(raw_inputs, op.input_extensions, recursive)
-    if output_dir is not None:
-        # Results of an earlier run must never be picked up as new inputs
-        # when the output folder sits inside one of the source folders.
-        root = output_dir.resolve()
-        inputs = [p for p in inputs if root not in p.resolve().parents]
+    roots = [p.resolve() for p in ([output_dir] if output_dir is not None else []) + list(exclude)]
+    if roots:
+        # Results of an earlier run must never be picked up as new inputs when the
+        # output folder sits inside one of the source folders. Files given explicitly
+        # (e.g. the previous workflow step's outputs) are always kept.
+        explicit = {Path(p).resolve() for p in raw_inputs if Path(p).is_file()}
+        inputs = [p for p in inputs
+                  if p.resolve() in explicit or not any(root in p.resolve().parents for root in roots)]
     op.check_inputs(inputs)
     return inputs, params
 
@@ -55,7 +58,7 @@ def preview_operation(
     op: Operation, raw_inputs: Sequence[Path | str], raw_params: Mapping[str, Any] | None,
     ctx: OperationContext, recursive: bool = True,
 ) -> Preview:
-    inputs, params = prepare(op, raw_inputs, raw_params, recursive, ctx.output_dir)
+    inputs, params = prepare(op, raw_inputs, raw_params, recursive, ctx.output_dir, ctx.exclude_roots)
     return op.preview(inputs, params, ctx)
 
 
@@ -72,7 +75,7 @@ def run_operation(
     clock = time.perf_counter()
     inputs: list[Path] = []
     try:
-        inputs, params = prepare(op, raw_inputs, raw_params, recursive, ctx.output_dir)
+        inputs, params = prepare(op, raw_inputs, raw_params, recursive, ctx.output_dir, ctx.exclude_roots)
         ctx.output_dir.mkdir(parents=True, exist_ok=True)
         log.info("Start %s on %d file(s) -> %s", op.id, len(inputs), ctx.output_dir)
         result = op.run(inputs, params, ctx)

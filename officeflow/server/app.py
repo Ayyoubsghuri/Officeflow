@@ -94,6 +94,7 @@ class JobBody(BaseModel):
     inputs: list[str] = Field(default_factory=list)
     output_dir: str = ""
     recursive: bool = True
+    keep_intermediate: bool = False
 
 
 class PathBody(BaseModel):
@@ -327,8 +328,9 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
             workflow.validate()
 
             def task(ctx):
-                outcome = run_workflow(workflow, inputs, ctx, body.recursive, db)
+                outcome = run_workflow(workflow, inputs, ctx, body.recursive, db, body.keep_intermediate)
                 data = result_json(as_result(outcome), outcome.status)
+                data["result_dir"] = str(outcome.result_dir) if outcome.result_dir and outcome.result_dir.is_dir() else ""
                 data["steps"] = [{"name": n, "status": o.status, "summary": o.result.summary,
                                   "outputs": len(o.result.outputs)} for n, o in outcome.steps]
                 return data
@@ -522,7 +524,7 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
             except OperationError as exc:
                 ai.record(body.kind, f"{provider}/{assistant.model}", text, f"failed: {exc}")
                 raise
-            ai.record(body.kind, f"{provider}/{assistant.model}", text, outcome, answer.get("usage"))
+            ai.record(body.kind, f"{provider}/{assistant.model}", text, outcome, answer.get("usage"), answer)
             answer["sent"] = text
             return answer
 

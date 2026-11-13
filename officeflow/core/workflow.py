@@ -7,7 +7,9 @@ inspectable: ``output/01 Clean data/…``, ``output/02 Remove duplicates/…``.
 
 from __future__ import annotations
 
+import shutil
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -17,7 +19,7 @@ from officeflow.core import registry
 from officeflow.core.operation import OperationContext, OperationError, OperationResult
 from officeflow.core.runner import RunOutcome, run_operation
 from officeflow.services.database import Database
-from officeflow.services.files import safe_filename
+from officeflow.services.files import safe_filename, unique_path
 
 
 @dataclass
@@ -66,6 +68,7 @@ class WorkflowOutcome:
     status: str
     summary: str
     steps: list[tuple[str, RunOutcome]] = field(default_factory=list)
+    result_dir: Path | None = None
 
     @property
     def outputs(self) -> list[Path]:
@@ -74,49 +77,76 @@ class WorkflowOutcome:
 
 def run_workflow(
     workflow: Workflow, inputs: Sequence[Path | str], ctx: OperationContext,
-    recursive: bool = True, db: Database | None = None,
+    recursive: bool = True, db: Database | None = None, keep_intermediate: bool = False,
 ) -> WorkflowOutcome:
+    """Run the steps in order. Only the final step's files are kept, in one folder
+    named after the workflow; earlier steps work in a temporary folder that is
+    removed at the end (or kept under "Intermediate steps" if asked)."""
     started, clock = datetime.now(), time.perf_counter()
     outcome = WorkflowOutcome("success", "")
+    result_dir = unique_path(ctx.output_dir / safe_filename(workflow.name or "Workflow"))
+    work_dir: Path | None = None
     try:
         workflow.validate()
+        if not keep_intermediate:
+            for number, step in enumerate(workflow.steps[:-1], 1):
+                if step.params.get("move"):
+                    raise OperationError(
+                        f"Step {number} ({registry.get(step.op_id).name}) is set to move files. Only the last step "
+                        "may move files, unless “Keep intermediate files” is on — otherwise the moved files "
+                        "would be deleted with the temporary files.")
     except OperationError as exc:
         outcome.status, outcome.summary = "failed", str(exc)
     else:
+        outcome.result_dir = result_dir
+        if keep_intermediate:
+            work_dir = result_dir / "Intermediate steps"
+        else:
+            work_dir = ctx.output_dir / f".officeflow-work-{uuid.uuid4().hex[:10]}"
         current: Sequence[Path | str] = inputs
         total = len(workflow.steps)
-        for index, step in enumerate(workflow.steps):
-            op = registry.get(step.op_id)
-            label = f"Step {index + 1}/{total} · {op.name}"
+        try:
+            for index, step in enumerate(workflow.steps):
+                op = registry.get(step.op_id)
+                label = f"Step {index + 1}/{total} · {op.name}"
+                last = index + 1 == total
 
-            def progress(done: int, count: int, message: str, _i=index, _label=label) -> None:
-                fraction = done / count if count else 0
-                ctx.progress(int((_i + fraction) * 1000), total * 1000, f"{_label} — {message}")
+                def progress(done: int, count: int, message: str, _i=index, _label=label) -> None:
+                    fraction = done / count if count else 0
+                    ctx.progress(int((_i + fraction) * 1000), total * 1000, f"{_label} — {message}")
 
-            step_ctx = ctx.child(f"{index + 1:02d} {safe_filename(op.name)}", progress)
-            result = run_operation(op, current, step.params, step_ctx, recursive)
-            outcome.steps.append((op.name, result))
-            if result.status in ("failed", "cancelled"):
-                outcome.status = result.status
-                outcome.summary = f"{label} {result.status}: {result.result.summary}"
-                break
-            if result.status == "warning":
-                outcome.status = "warning"
-            current = result.result.outputs
-            if index + 1 < total and not current:
-                outcome.status = "failed"
-                outcome.summary = f"{label} produced no files for the next step."
-                break
-        else:
-            outcome.summary = (
-                f"Workflow finished: {total} step(s), {len(outcome.outputs)} final file(s)."
-            )
+                folder = result_dir if last else work_dir / f"{index + 1:02d} {safe_filename(op.name)}"
+                step_ctx = OperationContext(folder, progress, ctx.cancel_event, ctx.log)
+                if index == 0:                      # never read earlier results or the work folder
+                    step_ctx.exclude_roots = [ctx.output_dir]
+                result = run_operation(op, current, step.params, step_ctx, recursive)
+                outcome.steps.append((op.name, result))
+                if result.status in ("failed", "cancelled"):
+                    outcome.status = result.status
+                    outcome.summary = f"{label} {result.status}: {result.result.summary}"
+                    break
+                if result.status == "warning":
+                    outcome.status = "warning"
+                current = result.result.outputs
+                if not last and not current:
+                    outcome.status = "failed"
+                    outcome.summary = f"{label} produced no files for the next step."
+                    break
+            else:
+                outcome.summary = (f"Workflow finished: {total} step(s), {len(outcome.outputs)} final file(s) "
+                                   f"in “{result_dir.name}”.")
+        finally:
+            if not keep_intermediate and work_dir is not None:
+                shutil.rmtree(work_dir, ignore_errors=True)       # only the folder created above
+            if result_dir.is_dir() and not any(result_dir.iterdir()):
+                result_dir.rmdir()                                 # nothing produced: no empty folder
     if db is not None:
         db.add_run(
             kind="workflow", target_id=workflow.name, name=workflow.name, started_at=started,
             duration_s=time.perf_counter() - clock, status=outcome.status,
             input_count=outcome.steps[0][1].input_count if outcome.steps else 0,
-            output_count=len(outcome.outputs), output_dir=ctx.output_dir, summary=outcome.summary,
+            output_count=len(outcome.outputs),
+            output_dir=result_dir if result_dir.is_dir() else ctx.output_dir, summary=outcome.summary,
             details={"steps": [{"name": n, "status": o.status, "summary": o.result.summary,
                                 "errors": o.result.errors[:50], "warnings": o.result.warnings[:50]}
                                for n, o in outcome.steps]},

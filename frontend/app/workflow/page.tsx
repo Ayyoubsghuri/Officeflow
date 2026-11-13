@@ -61,6 +61,7 @@ function Builder() {
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; index: number } | null>(null);
   const [outputDir, setOutputDir] = useState("");
   const [recursive, setRecursive] = useState(true);
+  const [keepIntermediate, setKeepIntermediate] = useState(false);
   const [runUids, setRunUids] = useState<string[]>([]);
   const editing = useRef("");
   const canvas = useRef<CanvasHandle>(null);
@@ -234,7 +235,7 @@ function Builder() {
     if (!inputs.length) return setError("Add the files or folders for the first step.");
     if (steps.some((s) => s.params.move) && !window.confirm("A step is set to move files: originals will be removed from their folders. Continue?")) return;
     setRunUids(steps.map((s) => s.uid));
-    start({ mode: "workflow", workflow: { ...definition(), name: name.trim() || "Unsaved workflow" }, inputs, output_dir: outputDir, recursive }, name.trim() || "Workflow");
+    start({ mode: "workflow", workflow: { ...definition(), name: name.trim() || "Unsaved workflow" }, inputs, output_dir: outputDir, recursive, keep_intermediate: keepIntermediate }, name.trim() || "Workflow");
   };
 
   const statusOf = (stepUid: string, index: number) => {
@@ -342,7 +343,8 @@ function Builder() {
                 <div className="muted" style={{ fontSize: 13 }}>These files go into the first step. Each following step receives the files produced by the step before it.</div>
                 <InputList title="Input" extensions={ops[0]?.input_extensions ?? []} value={inputs} onChange={setInputs} />
                 <RunPanel outputDir={outputDir} onOutputDir={setOutputDir} recursive={recursive} onRecursive={setRecursive}
-                  onRun={run} onCancel={cancel} job={job} error={error} runLabel="Run workflow" />
+                  onRun={run} onCancel={cancel} job={job} error={error} runLabel="Run workflow"
+                  keepIntermediate={keepIntermediate} onKeepIntermediate={setKeepIntermediate} />
               </motion.div>
             )}
           </AnimatePresence>
