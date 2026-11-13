@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ErrorBoundary from "./ErrorBoundary";
 import Icon from "./Icon";
 import { useApp } from "@/lib/app-context";
 import { bridge, whenBridgeReady } from "@/lib/desktop";
@@ -197,7 +198,9 @@ function ResizeHandles() {
 }
 
 export default function Shell({ children }: { children: React.ReactNode }) {
-  const { error, settings, saveSettings, stats, railCollapsed, setRailCollapsed } = useApp();
+  const { error, settings, saveSettings, stats, railCollapsed, setRailCollapsed, meta } = useApp();
+  const uiVersion = process.env.NEXT_PUBLIC_UI_VERSION ?? "";
+  const mismatch = meta && uiVersion && meta.version !== uiVersion;
   const router = useRouter();
   const pathname = usePathname();
   const failed = stats ? stats.runs - stats.ok : 0;
@@ -241,7 +244,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <AnimatePresence mode="wait">
             <motion.div key={pathname} className="page" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
-              {children}
+              {mismatch && (
+                <div className="banner warning" style={{ marginBottom: 14 }}>
+                  <b>OfficeFlow was only partly updated.</b> The interface is version {uiVersion} but the engine is {meta?.version}.
+                  Close every OfficeFlow window, then start it again with <code>python -m officeflow</code>.
+                </div>
+              )}
+              <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         )}

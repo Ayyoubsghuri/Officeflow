@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import pkg from "./package.json";
 
 // Static export: the Python server serves these files to the desktop window.
 const config: NextConfig = {
@@ -6,6 +7,7 @@ const config: NextConfig = {
   trailingSlash: true,
   images: { unoptimized: true },
   devIndicators: false,
+  env: { NEXT_PUBLIC_UI_VERSION: pkg.version },
 };
 
 export default config;

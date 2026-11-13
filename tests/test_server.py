@@ -127,3 +127,16 @@ def test_file_browser_scan_and_exists(client, tmp_path):
     assert scan["extensions"] == {".pdf": 1, ".txt": 1}
     exists = client.post("/api/fs/exists", json={"paths": [str(tmp_path / "a.pdf"), str(tmp_path / "zz")]}).json()
     assert [i["exists"] for i in exists["items"]] == [True, False]
+
+
+def test_pages_are_never_cached_but_build_files_are(tmp_path):
+    web = tmp_path / "web"
+    (web / "_next" / "static").mkdir(parents=True)
+    (web / "index.html").write_text("<html>ui</html>")
+    (web / "_next" / "static" / "app.123.js").write_text("x")
+    app = create_app(TOKEN, web_dir=web)
+    with TestClient(app) as c:
+        assert c.get("/").headers["cache-control"] == "no-cache"
+        assert c.get("/api/meta", headers={"X-OfficeFlow-Token": TOKEN}).headers["cache-control"] == "no-cache"
+        assert "immutable" in c.get("/_next/static/app.123.js").headers["cache-control"]
+    app.state.db.close()

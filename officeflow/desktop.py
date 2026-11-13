@@ -142,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--serve", action="store_true", help="only run the API server (development)")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--token", default="", help="fixed API token (development)")
+    parser.add_argument("--debug", action="store_true",
+                        help="open the developer tools in the window (to see interface errors)")
     args = parser.parse_args(argv)
 
     from officeflow.server.app import create_app
@@ -205,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from officeflow.services import paths
 
-        webview.start(private_mode=False, storage_path=str(paths.app_home() / "webview"))
+        webview.start(private_mode=False, storage_path=str(paths.app_home() / "webview"), debug=args.debug)
     finally:
         server.should_exit = True
     return 0

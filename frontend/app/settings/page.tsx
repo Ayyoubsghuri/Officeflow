@@ -31,7 +31,7 @@ function AiSettings() {
     }
   }, [toast]);
   useEffect(() => {
-    if (status?.providers.openai.configured && settings?.ai_provider === "openai" && !openaiModels.length) loadModels(true);
+    if (status?.providers?.openai?.configured && settings?.ai_provider === "openai" && !openaiModels.length) loadModels(true);
   }, [status, settings?.ai_provider, openaiModels.length, loadModels]);
 
   const save = async (provider: AiProvider) => {
@@ -45,8 +45,16 @@ function AiSettings() {
     }
   };
   if (!status || !settings) return null;
-  const provider = settings.ai_provider;
-  const info = status.providers[provider];
+  const provider: AiProvider = settings.ai_provider === "openai" ? "openai" : "anthropic";
+  const info = status.providers?.[provider];
+  if (!info) {
+    return (
+      <section className="card pad col" id="ai">
+        <div className="h2">AI assistant</div>
+        <div className="banner warning">The OfficeFlow engine is older than this screen. Close every OfficeFlow window and start it again.</div>
+      </section>
+    );
+  }
   return (
     <section className="card pad col" id="ai">
       <div className="row"><div className="h2 grow">AI assistant</div>

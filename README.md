@@ -77,6 +77,11 @@ Not implemented yet: OCR for scanned PDFs and "make PDF searchable", the dedicat
 optional local AI (Ollama), and the Windows installer. Scanned PDFs are detected and reported ("no text
 found") rather than processed.
 
+### If a page stays blank or shows an error
+Close every OfficeFlow window and start it again (an engine left running from before an update causes a
+version warning). To see the exact error, start with `python -m officeflow --debug`, right-click the page and
+choose **Inspect → Console**.
+
 ### Not verified on Windows yet
 This repository was developed and tested on Linux. The engines, API and interface are covered by the
 tests above, but the parts that only exist inside the native window could not be run here:

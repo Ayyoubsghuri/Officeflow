@@ -580,6 +580,18 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         return {"ok": True}
 
     # -- interface -----------------------------------------------------------
+    @app.middleware("http")
+    async def cache_policy(request: Request, call_next):
+        """Pages must always be re-checked: after an update a cached page would point to
+        script files that no longer exist and render blank. Hashed build files never change."""
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/_next/static/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     web = web_dir or WEB_DIR
     if (web / "index.html").exists():
         app.mount("/", StaticFiles(directory=web, html=True), name="web")
