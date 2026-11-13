@@ -47,22 +47,28 @@ def start_server(app, port: int) -> uvicorn.Server:
 
 
 class Bridge:
-    """Methods callable from the page as ``window.pywebview.api.<name>()``."""
+    """Methods callable from the page as ``window.pywebview.api.<name>()``.
+
+    pywebview exposes every public attribute of this object to JavaScript and
+    walks into attribute objects recursively, so everything that is not an API
+    method must be private (leading underscore). A public reference to the
+    window makes pywebview recurse through the native .NET window object.
+    """
 
     def __init__(self) -> None:
-        self.window = None
+        self._window = None
         self._maximized = False
         self._normal_geometry: tuple[int, int, int, int] | None = None
 
     # window controls ---------------------------------------------------------
     def minimize(self) -> None:
-        self.window.minimize()
+        self._window.minimize()
 
     def toggle_maximize(self) -> bool:
         if self._maximized:
-            self.window.restore()
+            self._window.restore()
         else:
-            self.window.maximize()
+            self._window.maximize()
         self._maximized = not self._maximized
         return self._maximized
 
@@ -70,22 +76,22 @@ class Bridge:
         return self._maximized
 
     def close(self) -> None:
-        self.window.destroy()
+        self._window.destroy()
 
     def geometry(self) -> dict[str, int]:
-        return {"x": self.window.x, "y": self.window.y, "width": self.window.width, "height": self.window.height}
+        return {"x": self._window.x, "y": self._window.y, "width": self._window.width, "height": self._window.height}
 
     def set_geometry(self, x: int, y: int, width: int, height: int) -> None:
         """Used by the resize handles drawn by the page (frameless windows have no native border)."""
         width, height = max(int(width), 1100), max(int(height), 700)
-        if (int(x), int(y)) != (self.window.x, self.window.y):
-            self.window.move(int(x), int(y))
-        if (width, height) != (self.window.width, self.window.height):
-            self.window.resize(width, height)
+        if (int(x), int(y)) != (self._window.x, self._window.y):
+            self._window.move(int(x), int(y))
+        if (width, height) != (self._window.width, self._window.height):
+            self._window.resize(width, height)
 
     # dialogs -----------------------------------------------------------------------
     def _dialog(self, kind, **options):
-        result = self.window.create_file_dialog(kind, **options)
+        result = self._window.create_file_dialog(kind, **options)
         if not result:
             return []
         return [result] if isinstance(result, str) else list(result)
@@ -174,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     window = webview.create_window(
         APP_NAME, url, js_api=bridge, width=1440, height=900, min_size=(1100, 700), frameless=True,
         easy_drag=False, background_color="#0A0B0C", text_select=False)
-    bridge.window = window
+    bridge._window = window
     app.state.window = window
     webview.settings["DRAG_REGION_SELECTOR"] = ".drag-region"
     webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
@@ -186,6 +192,15 @@ def main(argv: list[str] | None = None) -> int:
         return True
 
     window.events.closing += on_closing
+
+    def on_maximized() -> None:
+        bridge._maximized = True
+
+    def on_restored() -> None:
+        bridge._maximized = False
+
+    window.events.maximized += on_maximized
+    window.events.restored += on_restored
     window.events.loaded += lambda: _watch_drops(window)
     try:
         from officeflow.services import paths
