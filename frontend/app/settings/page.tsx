@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import FileBrowser from "@/components/FileBrowser";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Icon from "@/components/Icon";
 import { Check } from "@/components/ParamForm";
 import { motion } from "framer-motion";
@@ -149,12 +150,33 @@ function Plugins() {
 }
 
 export default function SettingsPage() {
+  const { settings, meta, error } = useApp();
+  if (!settings || !meta) {
+    return (
+      <div className="col" style={{ gap: 18, maxWidth: 820 }}>
+        <h1 className="h1">Settings</h1>
+        <div className={`banner ${error ? "failed" : ""}`}>{error ? `Settings could not be loaded: ${error}` : "Loading settings…"}</div>
+      </div>
+    );
+  }
+  // Each section is isolated: a problem in one never hides the others.
+  return (
+    <div className="col" style={{ gap: 18, maxWidth: 820 }}>
+      <h1 className="h1">Settings</h1>
+      <ErrorBoundary resetKey="general" label="General settings"><GeneralSettings /></ErrorBoundary>
+      <ErrorBoundary resetKey="ai" label="AI assistant settings"><AiSettings /></ErrorBoundary>
+      <ErrorBoundary resetKey="plugins" label="Plugins"><Plugins /></ErrorBoundary>
+      <ErrorBoundary resetKey="about" label="About"><About /></ErrorBoundary>
+    </div>
+  );
+}
+
+function GeneralSettings() {
   const { settings, saveSettings, meta } = useApp();
   const [browsing, setBrowsing] = useState(false);
   if (!settings || !meta) return null;
   return (
-    <div className="col" style={{ gap: 18, maxWidth: 820 }}>
-      <h1 className="h1">Settings</h1>
+    <div className="col" style={{ gap: 18 }}>
       <section className="card pad col">
         <div className="h2">Appearance</div>
         <div className="row">
@@ -185,15 +207,20 @@ export default function SettingsPage() {
         <div className="h2">Word to PDF</div>
         <div className="muted">{meta.pdf_converter ? `Conversions use ${meta.pdf_converter}.` : "No converter found. Install LibreOffice (free) or Microsoft Word to convert Word documents to PDF."}</div>
       </section>
-      <AiSettings />
-      <Plugins />
-      <section className="card pad col">
-        <div className="h2">About</div>
-        <div>OfficeFlow {meta.version} — offline office automation</div>
-        <div className="faint selectable" style={{ fontSize: 12 }}>Data folder: {meta.home}</div>
-      </section>
       {browsing && <FileBrowser mode="folder" extensions={[]} start={settings.output_dir} onClose={() => setBrowsing(false)}
         onPick={(p) => { saveSettings({ output_dir: p[0] }); setBrowsing(false); }} />}
     </div>
+  );
+}
+
+function About() {
+  const { meta } = useApp();
+  if (!meta) return null;
+  return (
+    <section className="card pad col">
+      <div className="h2">About</div>
+      <div>OfficeFlow {meta.version} — offline office automation (interface {process.env.NEXT_PUBLIC_UI_VERSION})</div>
+      <div className="faint selectable" style={{ fontSize: 12, wordBreak: "break-all" }}>Data folder: {meta.home}</div>
+    </section>
   );
 }

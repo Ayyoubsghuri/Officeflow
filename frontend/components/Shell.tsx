@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -241,9 +241,10 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         {error ? (
           <div className="page"><div className="banner failed"><b>Cannot reach OfficeFlow’s engine.</b><div className="muted">{error}</div></div></div>
         ) : (
-          <AnimatePresence mode="wait">
+          <>
+            {/* Entrance animation only: a new page never waits for the previous one to leave. */}
             <motion.div key={pathname} className="page" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
+              transition={{ duration: 0.18 }}>
               {mismatch && (
                 <div className="banner warning" style={{ marginBottom: 14 }}>
                   <b>OfficeFlow was only partly updated.</b> The interface is version {uiVersion} but the engine is {meta?.version}.
@@ -252,7 +253,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               )}
               <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
             </motion.div>
-          </AnimatePresence>
+          </>
         )}
       </main>
     </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { api, type JobState, type Meta, type Operation, type Settings, type Stats } from "./api";
+import { api, reportError, type JobState, type Meta, type Operation, type Settings, type Stats } from "./api";
 
 export interface ActiveJob {
   id: string;
@@ -63,6 +63,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     })();
   }, [refreshStats]);
+
+  // Errors outside React rendering (events, promises) go to the log and a message.
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      reportError(event.message, event.error?.stack ?? "");
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      reportError(reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason),
+        reason instanceof Error ? reason.stack ?? "" : "");
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings?.theme ?? "dark";

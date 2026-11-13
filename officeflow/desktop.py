@@ -136,6 +136,30 @@ def _watch_drops(window) -> None:
     window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
 
 
+def webview_storage() -> Path:
+    """Browser cache/profile of the desktop window, one folder per OfficeFlow version.
+
+    A new version starts with an empty cache, so the window can never reuse a page
+    cached by an older version (which points to build files that no longer exist and
+    renders blank). Profiles of older versions are removed; nothing else is touched.
+    """
+    import shutil
+
+    from officeflow import __version__
+    from officeflow.services import paths
+
+    root = paths.app_home() / "webview"
+    current = root / f"v{__version__}"
+    if root.is_dir():
+        for child in root.iterdir():
+            if child.is_dir() and child.name.startswith("v") and child != current:
+                shutil.rmtree(child, ignore_errors=True)
+            elif child.is_dir() and child.name == "EBWebView":      # profile of versions before 0.3.0
+                shutil.rmtree(child, ignore_errors=True)
+    current.mkdir(parents=True, exist_ok=True)
+    return current
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="officeflow", description=f"{APP_NAME} — offline office automation")
     parser.add_argument("--browser", action="store_true", help="open the interface in the default browser")
@@ -205,9 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     window.events.restored += on_restored
     window.events.loaded += lambda: _watch_drops(window)
     try:
-        from officeflow.services import paths
-
-        webview.start(private_mode=False, storage_path=str(paths.app_home() / "webview"), debug=args.debug)
+        webview.start(private_mode=False, storage_path=str(webview_storage()), debug=args.debug)
     finally:
         server.should_exit = True
     return 0

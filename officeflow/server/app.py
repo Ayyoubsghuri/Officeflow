@@ -100,6 +100,12 @@ class PathBody(BaseModel):
     path: str
 
 
+class ClientErrorBody(BaseModel):
+    message: str
+    page: str = ""
+    stack: str = ""
+
+
 class ScanBody(BaseModel):
     paths: list[str]
 
@@ -422,6 +428,12 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         if not path.exists():
             raise OperationError(f"Not found: {path}")
         open_in_explorer(path)
+        return {"ok": True}
+
+    @app.post("/api/client-error", dependencies=[api])
+    def client_error(body: ClientErrorBody) -> dict[str, bool]:
+        """Interface errors are written to the log so they can be found in Logs."""
+        log.error("Interface error on %s: %s\n%s", body.page[:200], body.message[:2000], body.stack[:4000])
         return {"ok": True}
 
     # -- AI assistant ----------------------------------------------------------------

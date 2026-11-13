@@ -79,8 +79,10 @@ found") rather than processed.
 
 ### If a page stays blank or shows an error
 Close every OfficeFlow window and start it again (an engine left running from before an update causes a
-version warning). To see the exact error, start with `python -m officeflow --debug`, right-click the page and
-choose **Inspect → Console**.
+version warning). Interface errors are written to the log, so **Logs → Errors only** shows what went wrong;
+a section of a page that fails shows its error instead of hiding the whole page. Each version of OfficeFlow
+starts the window with an empty cache. To inspect the page itself, start with `python -m officeflow --debug`,
+right-click the page and choose **Inspect → Console**.
 
 ### Not verified on Windows yet
 This repository was developed and tested on Linux. The engines, API and interface are covered by the

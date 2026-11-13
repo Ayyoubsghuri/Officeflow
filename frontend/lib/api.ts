@@ -269,3 +269,9 @@ export function watchJob(id: string, onUpdate: (job: JobState) => void): () => v
     if (timer) clearTimeout(timer);
   };
 }
+
+/** Send an interface error to the engine's log (best effort, never throws). */
+export function reportError(message: string, stack = ""): void {
+  if (typeof window === "undefined") return;
+  api("POST", "/api/client-error", { message, stack, page: window.location.pathname + window.location.search }).catch(() => {});
+}

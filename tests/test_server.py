@@ -140,3 +140,9 @@ def test_pages_are_never_cached_but_build_files_are(tmp_path):
         assert c.get("/api/meta", headers={"X-OfficeFlow-Token": TOKEN}).headers["cache-control"] == "no-cache"
         assert "immutable" in c.get("/_next/static/app.123.js").headers["cache-control"]
     app.state.db.close()
+
+
+def test_interface_errors_are_written_to_the_log(client):
+    client.post("/api/client-error", json={"message": "TypeError: x is undefined", "page": "/settings/", "stack": "at y"})
+    lines = "\n".join(client.get("/api/logs?level=errors").json()["lines"])
+    assert "Interface error on /settings/: TypeError: x is undefined" in lines
