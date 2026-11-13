@@ -159,6 +159,7 @@ class Operation(ABC):
     category: ClassVar[str]  # "excel" | "pdf" | "word" | "cross"
     description: ClassVar[str] = ""
     input_extensions: ClassVar[tuple[str, ...]] = ()
+    output_extensions: ClassVar[tuple[str, ...]] = ()  # what ``outputs`` contains (workflow chaining)
     input_label: ClassVar[str] = "Files or folders"
     min_inputs: ClassVar[int] = 1
     max_inputs: ClassVar[int | None] = None

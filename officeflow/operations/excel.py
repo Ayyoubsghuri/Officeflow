@@ -38,6 +38,7 @@ class _PerFile(Operation):
 
     category = "excel"
     input_extensions = io.TABLE_EXTENSIONS
+    output_extensions = (".xlsx",)
     suffix = ""
 
     def process(self, frame: pd.DataFrame, params: dict[str, Any], path: Path,
@@ -70,6 +71,7 @@ class MergeFiles(Operation):
     description = ("Combine many Excel/CSV files into one table. Columns are matched even when "
                    "their names differ slightly.")
     input_extensions = io.TABLE_EXTENSIONS
+    output_extensions = (".xlsx",)
     params = (
         Param("sheets", "Sheets to read", ParamType.CHOICE, "first",
               choices=(("first", "First sheet of each file"), ("all", "All sheets of each file"))),
@@ -250,6 +252,7 @@ class CompareFiles(Operation):
     category = "excel"
     description = "Find rows that exist in only one file and cells whose values changed."
     input_extensions = io.TABLE_EXTENSIONS
+    output_extensions = (".xlsx",)
     input_label = "Exactly two files (first = reference)"
     min_inputs = max_inputs = 2
     params = (
@@ -286,6 +289,7 @@ class SearchReplace(Operation):
     description = ("Replace text in every sheet of many files at once. Formatting is preserved; "
                    "formulas and numbers are not touched.")
     input_extensions = io.TABLE_EXTENSIONS
+    output_extensions = io.TABLE_EXTENSIONS
     params = (
         Param("find", "Find", required=True),
         Param("replace", "Replace with"),
@@ -330,6 +334,7 @@ class ExtractRows(Operation):
     category = "excel"
     description = "Collect the rows that match a condition from many files into one file."
     input_extensions = io.TABLE_EXTENSIONS
+    output_extensions = (".xlsx",)
     params = (
         SHEET,
         Param("column", "Column to test", required=True),
@@ -426,6 +431,7 @@ class ConvertFormat(Operation):
     category = "excel"
     description = "Convert CSV files to Excel workbooks, or each Excel sheet to a CSV file."
     input_extensions = io.TABLE_EXTENSIONS
+    output_extensions = (".xlsx", ".csv")
     params = (
         Param("delimiter", "CSV separator (when creating CSV)", ParamType.CHOICE, ",",
               choices=((",", "Comma  ,"), (";", "Semicolon  ;  (French Excel)"), ("\t", "Tab"))),

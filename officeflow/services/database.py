@@ -109,6 +109,19 @@ class Database:
             ).fetchone()
         return {"runs": row["runs"], "files": row["files"], "ok": row["ok"]}
 
+    def target_stats(self) -> dict[str, dict[str, Any]]:
+        """Per tool/workflow: number of runs, completed runs and the latest run."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT target_id, COUNT(*) AS runs, SUM(status IN ('success','warning')) AS ok,"
+                " MAX(id) AS last_id FROM runs GROUP BY target_id").fetchall()
+            result = {}
+            for row in rows:
+                last = self._conn.execute(
+                    "SELECT started_at, summary, status FROM runs WHERE id=?", (row["last_id"],)).fetchone()
+                result[row["target_id"]] = {"runs": row["runs"], "ok": row["ok"] or 0, **dict(last)}
+        return result
+
     def clear_runs(self) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM runs")

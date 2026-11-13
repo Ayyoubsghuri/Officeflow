@@ -52,6 +52,13 @@ class Workflow:
                 op.clean_params(step.params)
             except OperationError as exc:
                 raise OperationError(f"Step {number} ({op.name}): {exc}") from None
+            if number > 1:
+                previous = registry.get(self.steps[number - 2].op_id)
+                if not set(previous.output_extensions) & set(op.input_extensions):
+                    raise OperationError(
+                        f"Step {number} ({op.name}) cannot use the files produced by step "
+                        f"{number - 1} ({previous.name}): it needs {', '.join(op.input_extensions)} "
+                        f"but receives {', '.join(previous.output_extensions)}.")
 
 
 @dataclass

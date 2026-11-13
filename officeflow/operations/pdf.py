@@ -36,6 +36,7 @@ class _Planned(Operation):
 
     category = "pdf"
     input_extensions = PDF_EXTENSIONS
+    output_extensions = PDF_EXTENSIONS
     report_name = "Report.xlsx"
 
     def options(self, params) -> organizer.OrganizerOptions:
@@ -124,6 +125,7 @@ class ExtractText(Operation):
     category = "pdf"
     description = "Save the text of each PDF as a UTF-8 text file (Arabic and French supported)."
     input_extensions = PDF_EXTENSIONS
+    output_extensions = (".txt",)
     params = (Param("page_markers", "Insert a “Page N” line before each page", ParamType.BOOL, True),)
 
     def run(self, inputs, params, ctx):
@@ -151,6 +153,7 @@ class TablesToExcel(Operation):
     category = "pdf"
     description = "Detect tables in text-based PDFs and save them as Excel sheets (one workbook per PDF)."
     input_extensions = PDF_EXTENSIONS
+    output_extensions = (".xlsx",)
 
     def run(self, inputs, params, ctx):
         result = OperationResult("", headers=["File", "Tables"])
@@ -183,6 +186,7 @@ class MergePdfs(Operation):
     category = "pdf"
     description = "Join several PDFs into one, in the order listed, with a bookmark for each file."
     input_extensions = PDF_EXTENSIONS
+    output_extensions = PDF_EXTENSIONS
     min_inputs = 2
     params = (Param("output_name", "Output file name", default="Merged", required=True),)
 
@@ -200,6 +204,7 @@ class SplitPdf(Operation):
     category = "pdf"
     description = "Cut each PDF into smaller files of a fixed number of pages."
     input_extensions = PDF_EXTENSIONS
+    output_extensions = PDF_EXTENSIONS
     params = (Param("pages_per_file", "Pages per file", ParamType.INT, 1, minimum=1, maximum=10_000),)
 
     def run(self, inputs, params, ctx):
@@ -225,6 +230,7 @@ class ExtractPages(Operation):
     category = "pdf"
     description = "Keep only the pages you choose from each PDF."
     input_extensions = PDF_EXTENSIONS
+    output_extensions = PDF_EXTENSIONS
     params = (Param("pages", "Pages", required=True, placeholder="1-3, 5, 10-",
                     help="Page numbers and ranges. “10-” means from page 10 to the end."),)
 
@@ -253,6 +259,7 @@ class SearchPdfs(Operation):
     category = "pdf"
     description = "Find a word, phrase or pattern across many PDFs and list every occurrence in Excel."
     input_extensions = PDF_EXTENSIONS
+    output_extensions = (".xlsx",)
     params = (
         Param("find", "Search for", required=True),
         Param("regex", "Use a regular expression", ParamType.BOOL, False),
@@ -288,6 +295,7 @@ class ComparePdfs(Operation):
     category = "pdf"
     description = "Compare the text of two PDFs and produce a side-by-side report of the differences."
     input_extensions = PDF_EXTENSIONS
+    output_extensions = (".html",)
     input_label = "Exactly two PDFs (first = reference)"
     min_inputs = max_inputs = 2
 

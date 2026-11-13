@@ -17,8 +17,8 @@ def test_every_operation_is_well_formed():
     operations = registry.all_operations()
     assert len(operations) >= 19
     for op in operations:
-        assert op.id.split(".")[0] == op.category and op.description and op.input_extensions
-        assert op.clean_params({}) is not None or True if not any(p.required and not p.default for p in op.params) else True
+        assert op.id.split(".")[0] == op.category and op.description
+        assert op.input_extensions and op.output_extensions
         keys = [p.key for p in op.params]
         assert len(keys) == len(set(keys))
         for p in op.params:
@@ -117,4 +117,9 @@ def test_workflow_validation_and_incompatible_steps(tmp_path):
     pdf = make_pdf(tmp_path / "a.pdf", ["x"])
     mismatch = Workflow("w", [Step("pdf.text"), Step("pdf.merge")])
     outcome = run_workflow(mismatch, [pdf], ctx)
-    assert outcome.status == "failed" and "Step 2/2 · Merge PDFs failed" in outcome.summary
+    assert outcome.status == "failed" and outcome.summary == (
+        "Step 2 (Merge PDFs) cannot use the files produced by step 1 (Extract PDF text): "
+        "it needs .pdf but receives .txt.")
+    assert not (tmp_path / "out").exists()
+    too_few = run_workflow(Workflow("w", [Step("pdf.pages", {"pages": "1"}), Step("pdf.merge")]), [pdf], ctx)
+    assert too_few.status == "failed" and "Step 2/2 · Merge PDFs failed" in too_few.summary
