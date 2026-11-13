@@ -14,6 +14,7 @@ const NAV = [
   { href: "/toolbox/?cat=pdf", label: "PDF Toolbox", icon: "pdf", match: "pdf" },
   { href: "/toolbox/?cat=word", label: "Word Toolbox", icon: "word", match: "word" },
   { href: "/workflow/", label: "Workflow Builder", icon: "workflow" },
+  { href: "/assistant/", label: "AI Assistant", icon: "sparkle" },
 ];
 const NAV_BOTTOM = [
   { href: "/history/", label: "History", icon: "history" },

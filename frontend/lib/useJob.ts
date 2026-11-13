@@ -13,11 +13,11 @@ export function useJob() {
 
   useEffect(() => () => stop.current?.(), []);
 
-  const start = useCallback(async (body: Record<string, unknown>, label: string) => {
+  const start = useCallback(async (body: Record<string, unknown>, label: string, endpoint = "/api/jobs") => {
     setError("");
     setJob(null);
     try {
-      const first = await api<JobState>("POST", "/api/jobs", body);
+      const first = await api<JobState>("POST", endpoint, body);
       setJob(first);
       trackJob({ id: first.id, label, state: first });
       stop.current?.();

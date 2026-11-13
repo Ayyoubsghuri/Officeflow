@@ -56,9 +56,10 @@ npm run build
 npm run e2e
 ```
 
-`pytest` covers the engines, the tools, workflows and the HTTP API (57 tests). `npm run e2e` starts the real
+`pytest` covers the engines, the tools, workflows, the HTTP API and the AI assistant with a fake model (78 tests; no real AI calls). `npm run e2e` starts the real
 server with sample files and drives the built interface in Chromium through Playwright (organizer
-preview and run, workflow building rules, saving, every page, no browser errors).
+preview and run, workflow building rules, saving, the AI assistant with a stand-in model, every page,
+no browser errors).
 
 ## Status by phase
 
@@ -112,6 +113,33 @@ first step, and each step passes its output files to the next.
   change (Ctrl+Z / Ctrl+Shift+Z), Delete removes the selected step, Ctrl+S saves.
 - After a run each node shows Done / Remarks / Failed / Not run and how many files it produced.
 - Saved workflows open from the dashboard or the builder; the badge shows **Draft** until saved.
+
+## AI assistant (optional)
+
+Connect an Anthropic API key in **Settings → AI assistant** (default model Claude Opus 5.5; Sonnet 5.5 and
+Haiku 5.5 can be chosen). The assistant does two things only:
+
+- **Create a workflow** from a description. The answer is checked against the real tool list (tool ids,
+  settings, and that every step can read the previous step's files); problems are sent back for a fix
+  automatically. The result opens in the Workflow Builder as an unsaved draft — it is never run by itself.
+  If a needed tool does not exist, the assistant names it and offers to create it.
+- **Create a tool (plugin)** from a description. The code is checked statically before you see it: only
+  an allow-list of offline libraries (no networking, no launching programs, no `eval`/`exec`, no dynamic
+  imports), a valid tool definition, no replacing built-in tools. You read the code, tick “I have read this
+  code”, and only then is it installed into the plugin folder and loaded. Plugins can be viewed and removed in
+  Settings → Plugins.
+
+**What stays on your computer:** your files and their contents, file names and folder paths, results,
+history and logs. **What is sent:** your request text — shown to you exactly before you click *Send*, with
+file paths and e-mail addresses replaced by placeholders (on by default) — and OfficeFlow's tool list
+(names, settings, file formats). Every request is recorded locally in the assistant's *Activity* list
+(`ai_activity.jsonl` in the data folder). The API key is stored in the data folder, encrypted with Windows
+DPAPI on Windows, and is never sent back to the interface. Requests are billed to your API key; the
+server-side refusal fallback is enabled for Opus 5.5 / Sonnet 5.5 so a declined request is retried on a
+fallback model automatically.
+
+The static plugin check is a review aid, not a sandbox: a plugin runs with your user's permissions, so
+install only code you have read.
 
 ## Tools
 
@@ -175,6 +203,8 @@ carry the per-launch token, so other web pages open on the computer cannot use i
 officeflow/
 ├── __main__.py            entry point (python -m officeflow)
 ├── desktop.py             starts the server, opens the frameless window, window/dialog/drop bridge
+├── ai/                    assistant.py (Claude requests, answer checks) · privacy.py (redaction, tool
+│                          catalog) · plugin_check.py (static safety check for AI-written plugins)
 ├── server/
 │   ├── app.py             FastAPI routes: tools, jobs, workflows, history, logs, settings, files
 │   └── jobs.py            background jobs with progress, cancellation and event streams
@@ -249,7 +279,7 @@ Settings, the SQLite database (history + saved workflows), logs and plugins live
 
 ## Dependencies
 Python: `pandas`, `openpyxl`, `PyMuPDF` (PDF text, tables, pages), `python-docx`, `fastapi` + `uvicorn`
-(local API), `pywebview` (native window on Windows/macOS). Interface: Next.js, React, Framer Motion; the
+(local API), `pywebview` (native window on Windows/macOS), `anthropic` (optional AI assistant). Interface: Next.js, React, Framer Motion; the
 Urbanist font (SIL OFL) is bundled, so nothing is loaded from the internet. Word → PDF uses LibreOffice
 or Microsoft Word if installed. Camelot/OpenCV were not needed: PyMuPDF's table finder covers ruled
 tables in text PDFs.

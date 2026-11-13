@@ -36,7 +36,11 @@ from officeflow.engines.word import convert
 from officeflow.server.jobs import JobManager, result_json
 from officeflow.services import paths
 from officeflow.services.database import Database
-from officeflow.services.files import unique_path
+from officeflow.ai import assistant as ai
+from officeflow.ai import privacy
+from officeflow.ai.plugin_check import check_plugin
+from officeflow.services import secrets as keystore
+from officeflow.services.files import safe_filename, unique_path
 from officeflow.services.logsetup import setup_logging
 from officeflow.services.settings import Settings
 
@@ -50,6 +54,23 @@ class SettingsBody(BaseModel):
     output_dir: str | None = None
     include_subfolders: bool | None = None
     last_input_dir: str | None = None
+    ai_model: str | None = None
+    ai_redact: bool | None = None
+
+
+class KeyBody(BaseModel):
+    key: str
+
+
+class AiRequestBody(BaseModel):
+    kind: str            # workflow | plugin
+    request: str
+
+
+class PluginBody(BaseModel):
+    file_name: str
+    code: str
+    replace: bool = False
 
 
 class StepBody(BaseModel):
@@ -177,12 +198,15 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
     def get_settings() -> dict[str, Any]:
         s: Settings = app.state.settings
         return {"theme": s.theme, "output_dir": str(s.resolved_output_dir()),
-                "include_subfolders": s.include_subfolders, "last_input_dir": s.last_input_dir}
+                "include_subfolders": s.include_subfolders, "last_input_dir": s.last_input_dir,
+                "ai_model": s.ai_model, "ai_redact": s.ai_redact}
 
     @app.put("/api/settings", dependencies=[api])
     def put_settings(body: SettingsBody) -> dict[str, Any]:
         s: Settings = app.state.settings
         for key, value in body.model_dump(exclude_none=True).items():
+            if key == "ai_model" and value not in ai.MODELS:
+                raise OperationError(f"Unknown model {value!r}.")
             setattr(s, key, value)
         s.save()
         return get_settings()
@@ -388,6 +412,131 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         if not path.exists():
             raise OperationError(f"Not found: {path}")
         open_in_explorer(path)
+        return {"ok": True}
+
+    # -- AI assistant ----------------------------------------------------------------
+    app.state.assistant_factory = lambda key, model: ai.Assistant(key, model)
+
+    @app.get("/api/ai/status", dependencies=[api])
+    def ai_status() -> dict[str, Any]:
+        s: Settings = app.state.settings
+        try:
+            import anthropic  # noqa: F401
+            sdk = True
+        except ImportError:
+            sdk = False
+        return {"configured": bool(keystore.load_api_key()), "key_hint": keystore.key_hint(), "sdk": sdk,
+                "provider": "Anthropic (Claude)", "model": s.ai_model, "models": ai.MODELS, "redact": s.ai_redact}
+
+    @app.put("/api/ai/key", dependencies=[api])
+    def save_key(body: KeyBody) -> dict[str, Any]:
+        key = body.key.strip()
+        if len(key) < 20 or any(c.isspace() for c in key):
+            raise OperationError("That does not look like an API key.")
+        keystore.save_api_key(key)
+        return ai_status()
+
+    @app.delete("/api/ai/key", dependencies=[api])
+    def delete_key() -> dict[str, Any]:
+        keystore.delete_api_key()
+        return ai_status()
+
+    @app.post("/api/ai/preview", dependencies=[api])
+    def ai_preview(body: AiRequestBody) -> dict[str, Any]:
+        """Exactly what would be sent — nothing is sent by this call."""
+        redaction = privacy.redact(body.request) if app.state.settings.ai_redact else privacy.Redaction(body.request)
+        return {"sent": redaction.text, "replaced": redaction.replaced, "catalog_tools": len(privacy.catalog()),
+                "model": app.state.settings.ai_model}
+
+    @app.post("/api/ai/jobs", dependencies=[api])
+    def ai_job(body: AiRequestBody) -> dict[str, Any]:
+        if body.kind not in ("workflow", "plugin"):
+            raise HTTPException(400, "Unknown request type.")
+        if not body.request.strip():
+            raise OperationError("Describe what you want first.")
+        settings: Settings = app.state.settings
+        text = privacy.redact(body.request).text if settings.ai_redact else body.request
+        assistant = app.state.assistant_factory(keystore.load_api_key(), settings.ai_model)
+
+        def task(ctx):
+            ctx.progress(0, 0, "Asking the AI…")
+            try:
+                if body.kind == "workflow":
+                    answer = assistant.design_workflow(text)
+                    outcome = f"workflow “{answer['name']}” with {len(answer['workflow']['steps'])} step(s)"
+                else:
+                    answer = assistant.create_plugin(text)
+                    outcome = f"plugin {answer['file_name']}"
+            except OperationError as exc:
+                ai.record(body.kind, assistant.model, text, f"failed: {exc}")
+                raise
+            ai.record(body.kind, assistant.model, text, outcome, answer.get("usage"))
+            answer["sent"] = text
+            return answer
+
+        return app.state.jobs.start("ai", settings.resolved_output_dir(), task).snapshot()
+
+    @app.get("/api/ai/activity", dependencies=[api])
+    def ai_activity() -> list[dict[str, Any]]:
+        return ai.activity()
+
+    # -- plugins -------------------------------------------------------------------
+    def plugin_path(name: str) -> Path:
+        clean = safe_filename(Path(name).name)
+        if not clean.endswith(".py") or clean.startswith("."):
+            raise OperationError("A plugin file name must end in .py.")
+        return paths.plugins_dir() / clean
+
+    @app.get("/api/plugins", dependencies=[api])
+    def list_plugins() -> list[dict[str, Any]]:
+        loaded = registry.plugin_tools()
+        items = []
+        for file in sorted(paths.plugins_dir().glob("*.py")):
+            ids = loaded.get(file.name, [])
+            items.append({"file": file.name, "tools": [{"id": i, "name": registry.get(i).name} for i in ids],
+                          "loaded": bool(ids), "size": file.stat().st_size})
+        return items
+
+    @app.get("/api/plugins/{name}", dependencies=[api])
+    def read_plugin(name: str) -> dict[str, str]:
+        path = plugin_path(name)
+        if not path.exists():
+            raise HTTPException(404, "No such plugin.")
+        return {"file": path.name, "code": path.read_text(encoding="utf-8")}
+
+    @app.post("/api/plugins/check", dependencies=[api])
+    def check_code(body: PluginBody) -> dict[str, Any]:
+        return check_plugin(body.code, registry.builtin_ids()).__dict__
+
+    @app.post("/api/plugins", dependencies=[api])
+    def install_plugin(body: PluginBody) -> dict[str, Any]:
+        """Install code the user has read and approved (checked again here)."""
+        result = check_plugin(body.code, registry.builtin_ids())
+        if not result.ok:
+            raise OperationError("The plugin failed the safety check: " + "; ".join(result.errors))
+        path = plugin_path(body.file_name)
+        if path.exists() and not body.replace:
+            raise OperationError(f"A plugin named {path.name} already exists.")
+        previous = path.read_text(encoding="utf-8") if path.exists() else None
+        path.write_text(body.code, encoding="utf-8")
+        try:
+            ids = registry.load_plugin(path)
+        except Exception as exc:  # noqa: BLE001 - report and roll back
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(previous, encoding="utf-8")
+                registry.load_plugin(path)
+            raise OperationError(f"The plugin could not be loaded: {exc.__class__.__name__}: {exc}") from None
+        log.info("Plugin %s installed with tools %s", path.name, ids)
+        return {"file": path.name, "tools": ids}
+
+    @app.delete("/api/plugins/{name}", dependencies=[api])
+    def remove_plugin(name: str) -> dict[str, bool]:
+        path = plugin_path(name)
+        registry.unload_plugin(path.name)
+        path.unlink(missing_ok=True)
+        log.info("Plugin %s removed", path.name)
         return {"ok": True}
 
     # -- interface -----------------------------------------------------------

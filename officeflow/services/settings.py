@@ -18,6 +18,8 @@ class Settings:
     output_dir: str = ""
     include_subfolders: bool = True
     last_input_dir: str = ""
+    ai_model: str = "claude-opus-5-5"
+    ai_redact: bool = True           # replace file paths / e-mails in AI requests
 
     def resolved_output_dir(self) -> Path:
         return Path(self.output_dir) if self.output_dir else paths.default_output_dir()

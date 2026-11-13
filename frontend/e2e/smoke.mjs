@@ -12,7 +12,13 @@ const port = 8790 + Math.floor(Math.random() * 100);
 const token = "e2e";
 const work = mkdtempSync(join(tmpdir(), "officeflow-e2e-"));
 const python = process.env.PYTHON ?? (process.platform === "win32" ? "python" : "python3");
-const server = spawn(python, ["../tests/ui_server.py", work, String(port), token], { stdio: "inherit" });
+const server = spawn(python, ["../tests/ui_server.py", work, String(port), token], {
+  stdio: "inherit",
+  env: { ...process.env, OFFICEFLOW_FAKE_AI: "1" },
+});
+const shot = async (page, name) => {
+  if (process.env.SHOTS) await page.screenshot({ path: join(process.env.SHOTS, `${name}.png`) });
+};
 const base = `http://127.0.0.1:${port}`;
 const failures = [];
 const check = (ok, label) => {
@@ -80,6 +86,50 @@ try {
   await page.click(".builder-top button:has-text('Save')");
   await page.waitForSelector(".tag.green:has-text('Saved')");
   check(true, "workflow saved");
+
+  // AI assistant (a fake model stands in for Claude in this test).
+  await page.goto(`${base}/settings/`);
+  await page.fill("#ai input[type=password]", "sk-ant-test-0123456789abcdefWXYZ");
+  await page.click("#ai button:has-text('Save')");
+  await page.waitForSelector("#ai .tag.green");
+  check(!(await page.content()).includes("0123456789abcdef"), "API key is not shown back after saving");
+  await page.goto(`${base}/assistant/`);
+  await page.waitForSelector(".prompt");
+  await page.fill(".prompt", "Sort the PDFs in C:\\Users\\ali\\Scans by reference, send to ali@x.ma");
+  await page.click("button:has-text('Review before sending')");
+  await page.waitForSelector(".sendbox pre");
+  const sent = await page.textContent(".sendbox pre");
+  check(sent.includes("<path-1>") && sent.includes("<email-1>") && !sent.includes("Users"),
+    "paths and e-mails are hidden before sending");
+  await page.waitForTimeout(300);
+  await shot(page, "ai-review");
+  await page.click(".sendbox button.primary");
+  await page.waitForSelector("text=Open in Workflow Builder", { timeout: 20000 });
+  check((await page.$$(".ai-step")).length === 2, "AI proposes a two-step workflow");
+  await page.waitForTimeout(400);
+  await shot(page, "ai-workflow");
+  await page.click("text=Open in Workflow Builder");
+  await page.waitForSelector(".flow-node:has-text('Search text in PDFs')");
+  check((await page.$$(".flow-node")).length === 3, "AI draft opens in the builder");
+  await page.waitForTimeout(500);
+  await shot(page, "ai-builder");
+  await page.goto(`${base}/assistant/?mode=plugin`);
+  await page.waitForSelector(".prompt");
+  await page.fill(".prompt", "A tool that counts PDF pages");
+  await page.click("button:has-text('Review before sending')");
+  await page.click(".sendbox button.primary");
+  await page.waitForSelector("text=Safety check passed", { timeout: 20000 });
+  check(await page.$eval("button:has-text('Install plugin')", (b) => b.disabled), "install needs explicit approval");
+  await page.click("text=I have read this code");
+  await shot(page, "ai-plugin");
+  await page.click("button:has-text('Install plugin')");
+  await page.waitForSelector("text=Plugin installed");
+  await page.click("button:has-text('Open Count pages')");
+  await page.waitForSelector("h1:has-text('Count pages')");
+  check(true, "AI-written tool installed and opened");
+  await page.goto(`${base}/assistant/`);
+  await page.waitForSelector(".activity");
+  check((await page.$$(".activity")).length === 2, "activity log lists what was sent");
 
   for (const path of ["/toolbox/?cat=word", "/history/", "/logs/", "/settings/"]) {
     await page.goto(`${base}${path}`);

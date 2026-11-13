@@ -102,6 +102,28 @@ function Builder() {
     if (wanted && meta) load(wanted);
   }, [params, meta, load]);
 
+  // A workflow proposed by the AI assistant opens here as an unsaved draft.
+  useEffect(() => {
+    if (params.get("draft") !== "ai" || !meta) return;
+    const raw = sessionStorage.getItem("officeflow-ai-draft");
+    if (!raw) return;
+    sessionStorage.removeItem("officeflow-ai-draft");
+    try {
+      const draft = JSON.parse(raw) as WorkflowDef;
+      setName(draft.name);
+      setSteps(draft.steps.filter((s) => find(s.op)).map((s) => ({ uid: uid(), op: s.op, params: { ...defaults(find(s.op)!.params), ...s.params } })));
+      setSaved(null);
+      setSelected(START);
+      setPositions({});
+      setUndo([]);
+      setRedo([]);
+      setTimeout(() => canvas.current?.fit(), 50);
+      toast("Draft from the AI assistant — review each step, choose the input files, then run or save.");
+    } catch {
+      /* ignore a damaged draft */
+    }
+  }, [params, meta, find, toast]);
+
   // Which file types the chosen inputs contain (drives what the first step may be).
   useEffect(() => {
     if (!inputs.length) return setStartExts(null);
@@ -273,6 +295,8 @@ function Builder() {
           <option value="">Open a saved workflow…</option>
           {savedList.map((w) => <option key={w.name} value={w.name}>{w.name} ({w.steps.length} steps)</option>)}
         </select>
+        <button className="btn pink" onClick={() => router.push("/assistant/?mode=workflow")} title="Describe a workflow and let the AI build it">
+          <Icon name="sparkle" size={17} />Ask AI</button>
         <button className="btn" onClick={newWorkflow}><Icon name="plus" size={17} />New</button>
         <button className="btn danger" disabled={!saved} onClick={deleteSaved}><Icon name="trash" size={16} />Delete</button>
         <button className="btn" onClick={save}><Icon name="save" size={17} />Save</button>

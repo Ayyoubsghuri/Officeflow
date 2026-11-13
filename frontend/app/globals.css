@@ -359,3 +359,33 @@ a { color: inherit; text-decoration: none; }
 .addmenu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; background: none; border-radius: 12px; cursor: pointer; text-align: left; }
 .addmenu-item:hover { background: var(--surface-2); }
 .tile.small { width: 30px; height: 30px; border-radius: 9px; }
+
+/* ---------- AI assistant ---------- */
+.assistant { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; align-items: start; }
+.segmented { display: inline-flex; gap: 4px; padding: 4px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--border); align-self: flex-start; }
+.segmented button { position: relative; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: 12px; border: none;
+  background: none; cursor: pointer; font-weight: 600; color: var(--muted); isolation: isolate; }
+.segmented button.on { color: var(--text); }
+.seg-bg { position: absolute; inset: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,.18); z-index: -1; }
+.prompt { min-height: 130px; font-family: inherit; font-size: 15px; }
+.example { text-align: left; border: 1px dashed var(--border-strong); background: transparent; border-radius: 12px; padding: 8px 12px; font-size: 12.5px;
+  color: var(--muted); cursor: pointer; max-width: 100%; }
+.example:hover { border-color: var(--pink); color: var(--text); }
+.sendbox { border: 1px solid var(--pink); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: rgba(242,85,125,.05); }
+.sendbox pre, .activity pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 14px; background: var(--field);
+  border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+.privacy-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.privacy-list { margin: 6px 0 0; padding: 0; list-style: none; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.privacy-list li { padding-left: 22px; position: relative; line-height: 1.35; }
+.privacy-list.keep li::before { content: "✓"; position: absolute; left: 0; color: var(--accent-text); font-weight: 800; }
+.privacy-list.send li::before { content: "↗"; position: absolute; left: 0; color: var(--pink); font-weight: 800; }
+.ai-step { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); }
+.codeview { max-height: 420px; overflow: auto; border-radius: 14px; border: 1px solid var(--border); background: var(--field); padding: 10px 0;
+  font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; line-height: 1.55; }
+.codeline { display: flex; white-space: pre; padding-right: 14px; }
+.codeline .ln { width: 46px; flex: none; text-align: right; padding-right: 14px; color: var(--faint); user-select: none; }
+.activity summary { cursor: pointer; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.activity { border-top: 1px solid var(--border); padding-top: 8px; }
+.dot-ok { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.spin.dark { border-color: var(--border-strong); border-top-color: var(--accent); }
+.plugin-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2); }

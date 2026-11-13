@@ -45,6 +45,66 @@ export interface Settings {
   output_dir: string;
   include_subfolders: boolean;
   last_input_dir: string;
+  ai_model: string;
+  ai_redact: boolean;
+}
+
+export interface AiStatus {
+  configured: boolean;
+  key_hint: string;
+  sdk: boolean;
+  provider: string;
+  model: string;
+  models: Record<string, string>;
+  redact: boolean;
+}
+
+export interface AiPreview {
+  sent: string;
+  replaced: { kind: string; original: string; placeholder: string }[];
+  catalog_tools: number;
+  model: string;
+}
+
+export interface PluginCheck {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  tools: { id: string; name: string; category: string; class: string }[];
+}
+
+export interface AiAnswer {
+  kind: "workflow" | "plugin";
+  sent: string;
+  explanation: string;
+  rounds: number;
+  usage: { input_tokens: number; output_tokens: number };
+  // workflow
+  name?: string;
+  workflow?: WorkflowDef;
+  notes?: string[];
+  missing_tools?: { name: string; description: string; reads: string[]; writes: string[] }[];
+  // plugin
+  file_name?: string;
+  code?: string;
+  check?: PluginCheck;
+}
+
+export interface AiActivity {
+  time: string;
+  kind: string;
+  model: string;
+  sent_request: string;
+  also_sent: string;
+  outcome: string;
+  usage: { input_tokens?: number; output_tokens?: number };
+}
+
+export interface PluginFile {
+  file: string;
+  tools: { id: string; name: string }[];
+  loaded: boolean;
+  size: number;
 }
 
 export interface Run {
@@ -100,11 +160,11 @@ export interface Result {
 
 export interface JobState {
   id: string;
-  kind: "preview" | "run" | "workflow";
+  kind: "preview" | "run" | "workflow" | "ai";
   state: "running" | "done" | "error";
   progress: { done: number; total: number; message: string };
   steps: Record<string, string>;
-  result: Result | null;
+  result: (Result & Partial<AiAnswer>) | null;
   error: string;
   output_dir: string;
   elapsed: number;

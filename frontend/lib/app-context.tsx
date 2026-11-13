@@ -17,6 +17,7 @@ interface AppValue {
   op(id: string): Operation | undefined;
   saveSettings(patch: Partial<Settings>): Promise<void>;
   refreshStats(): Promise<void>;
+  refreshMeta(): Promise<void>;
   toast(message: string, kind?: "info" | "error"): void;
   activeJobs: ActiveJob[];
   trackJob(job: ActiveJob): void;
@@ -73,6 +74,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toastTimer.current = setTimeout(() => setToastState(null), 4200);
   }, []);
 
+  const refreshMeta = useCallback(async () => {
+    try {
+      setMeta(await api<Meta>("GET", "/api/meta"));
+    } catch {
+      /* keep the previous list */
+    }
+  }, []);
+
   const saveSettings = useCallback(async (patch: Partial<Settings>) => {
     setSettings((current) => (current ? { ...current, ...patch } : current));
     try {
@@ -93,8 +102,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AppValue>(() => ({
     meta, settings, stats, error, op: (id) => meta?.operations.find((o) => o.id === id),
-    saveSettings, refreshStats, toast, activeJobs, trackJob, railCollapsed, setRailCollapsed,
-  }), [meta, settings, stats, error, saveSettings, refreshStats, toast, activeJobs, trackJob, railCollapsed]);
+    saveSettings, refreshStats, refreshMeta, toast, activeJobs, trackJob, railCollapsed, setRailCollapsed,
+  }), [meta, settings, stats, error, saveSettings, refreshStats, refreshMeta, toast, activeJobs, trackJob, railCollapsed]);
 
   return (
     <AppContext.Provider value={value}>

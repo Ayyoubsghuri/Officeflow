@@ -25,4 +25,25 @@ make_xlsx(data / "excel" / "clients.xlsx", [{"Nom": " Ali ", "Montant": 10}, {"N
 settings = Settings.load()
 settings.output_dir, settings.last_input_dir = str(work / "out"), str(data / "pdfs")
 settings.save()
-uvicorn.run(create_app(token), host="127.0.0.1", port=port, log_level="warning")
+app = create_app(token)
+if os.environ.get("OFFICEFLOW_FAKE_AI"):
+    # Stand-in for Claude so the interface can be tested without an API key.
+    from officeflow.ai import assistant as ai
+    from tests.test_ai import GOOD_PLUGIN, FakeClient, workflow_answer
+
+    def factory(key, model):
+        fake = FakeClient(
+            workflow_answer([("pdf.organize", {"patterns": r"\b\d{4}/\d{2}/\d{3}\b"}), ("pdf.search", {"find": "Total"})],
+                            missing=[{"name": "OCR", "description": "Read scanned PDFs.", "reads": [".pdf"],
+                                      "writes": [".pdf"]}]),
+            ai.PluginAnswer(file_name="count_pages.py", explanation="Counts the pages of each PDF.", code=GOOD_PLUGIN))
+
+        class Picker(ai.Assistant):
+            def create_plugin(self, request):
+                fake.answers.pop(0)          # skip the workflow answer
+                return super().create_plugin(request)
+
+        return Picker(key or "fake", model, client=fake)
+
+    app.state.assistant_factory = factory
+uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
