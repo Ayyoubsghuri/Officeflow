@@ -28,7 +28,8 @@ def button(text: str, kind: str = "", icon_name: str = "", tooltip: str = "") ->
     if kind:
         widget.setProperty("kind", kind)
     if icon_name:
-        color = theme.INK if kind in ("primary", "hero") else theme.DANGER if kind == "danger" else None
+        color = (theme.INK if kind in ("primary", "hero") else theme.DANGER if kind == "danger"
+                 else "#F2557D" if kind == "create" else None)
         widget.setIcon(icons.icon(icon_name, color, 18))
         widget.setIconSize(QSize(18, 18))
     if tooltip:

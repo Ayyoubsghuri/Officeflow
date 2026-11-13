@@ -104,7 +104,8 @@ class RunPanel(QWidget):
         return self._thread is not None
 
     def start(self, task: Callable[[OperationContext], Any], on_done: Callable[[Any], None],
-              message: str = "Working…") -> None:
+              message: str = "Working…",
+              on_progress: Callable[[int, int, str], None] | None = None) -> None:
         """Run ``task`` in the background; ``on_done(result)`` is called in
         the GUI thread when it succeeds."""
         if self._thread is not None:
@@ -114,6 +115,8 @@ class RunPanel(QWidget):
         self._set_busy(True, message)
         thread = TaskThread(task, self.output_dir(), self)
         thread.progress.connect(self._on_progress)
+        if on_progress is not None:
+            thread.progress.connect(on_progress)
         thread.succeeded.connect(on_done)
         thread.failed.connect(lambda text: self.show_message("failed", text))
         thread.finished.connect(self._on_finished)

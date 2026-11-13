@@ -76,6 +76,22 @@ QLabel[role="statuspill"] {{ border-radius: 20px; padding: 10px 22px; color: #FF
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1E7A44, stop:0.5 #3DAE66, stop:1 #1E7A44); }}
 QLabel[role="alert"] {{ background: {DANGER}; color: #FFFFFF; border-radius: 9px; font-size: 10px; font-weight: 700; }}
 QLineEdit[pill="true"] {{ border-radius: 21px; padding: 0 18px; background: {p.card}; min-height: 42px; max-height: 42px; }}
+QFrame[floatbar="true"] {{ background: {p.card}; border: 1px solid {p.border}; border-radius: 16px; }}
+QPushButton[kind="tool"] {{ background: transparent; border: none; border-radius: 12px; padding: 0; min-height: 0; }}
+QPushButton[kind="tool"]:hover {{ background: {p.card_hover}; }}
+QPushButton[kind="tool"]:checked {{ background: {p.selection}; }}
+QPushButton[kind="create"] {{ background: transparent; color: #F2557D; border: 1px solid {p.border};
+    border-radius: 14px; padding: 8px 18px; }}
+QPushButton[kind="create"]:hover {{ border-color: #F2557D; background: rgba(242,85,125,0.08); }}
+QLabel[role="crumb"] {{ color: {p.muted}; font-size: 16px; font-weight: 600; }}
+QLabel[role="draft"] {{ background: #F7A8F0; color: #6A0A5F; border-radius: 6px; padding: 3px 9px;
+    font-size: 12px; font-weight: 700; }}
+QLabel[role="saved"] {{ background: {p.accent_soft}; color: {p.accent_text}; border-radius: 6px; padding: 3px 9px;
+    font-size: 12px; font-weight: 700; }}
+QLineEdit[title="true"] {{ background: transparent; border: 1px solid transparent; border-radius: 10px;
+    font-size: 20px; font-weight: 700; padding: 4px 8px; }}
+QLineEdit[title="true"]:hover {{ border-color: {p.border}; }}
+QLineEdit[title="true"]:focus {{ border-color: #F2557D; background: {p.field}; }}
 QFrame[folder="true"] {{ background: transparent; border: none; }}
 QFrame[folder="true"] QLabel {{ color: #FFFFFF; }}
 QFrame[folder="true"] QLabel[role="muted"] {{ color: rgba(255,255,255,0.80); }}

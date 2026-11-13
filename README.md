@@ -45,6 +45,15 @@ order) · Search and replace (keeps formatting, never touches formulas) · Extra
 Formatted report (styled header, filters, totals, group summary) · CSV ↔ Excel (detects UTF-8/UTF-16/
 Windows-1256/1252 and the delimiter; keeps leading zeros).
 
+### Workflow Builder
+A node canvas: a **Files & folders** start node feeds the first step, and each step node passes its output
+files to the next. Add steps from the floating **Add step** bar or the dashed node at the end of the chain;
+drag nodes, pan by dragging the background, zoom with the wheel or the left tool bar, and undo/redo every
+change (Ctrl+Z / Ctrl+Shift+Z). Selecting a node opens its settings in the panel on the right. A step that
+cannot use the previous step's files (for example "Merge PDFs" after "Extract PDF text") is marked in red
+before anything runs. After a run each node shows Done / Failed / Not run and the number of files it made.
+Workflows are saved by name; the badge next to the name shows **Draft** until the current version is saved.
+
 ### PDF toolbox
 **Smart Organizer** — several source folders, several regex patterns (capture group or `(?P<value>…)`
 selects the value), one output folder per value regardless of the source folder, optional renaming

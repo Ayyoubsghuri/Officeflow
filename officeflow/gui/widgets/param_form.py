@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from officeflow.core.operation import Param, ParamType
@@ -13,6 +14,8 @@ from officeflow.gui.widgets.common import label
 
 
 class ParamForm(QWidget):
+    changed = Signal()  # any value edited by the user
+
     def __init__(self, params: Sequence[Param]) -> None:
         super().__init__()
         self._editors: dict[str, tuple[Param, QWidget]] = {}
@@ -24,18 +27,41 @@ class ParamForm(QWidget):
         for param in params:
             editor = self._editor(param)
             self._editors[param.key] = (param, editor)
-            if param.type is not ParamType.BOOL:
+            self._watch(editor)
+            if param.type is ParamType.BOOL:
+                layout.addWidget(self._check_row(editor, param.label))  # type: ignore[arg-type]
+            else:
                 layout.addWidget(label(param.label + (" *" if param.required else ""), "field", wrap=True))
-            layout.addWidget(editor)
+                layout.addWidget(editor)
             if param.help:
                 layout.addWidget(label(param.help, "help", wrap=True))
             layout.addSpacing(8)
         layout.addStretch()
 
     @staticmethod
+    def _check_row(box: QCheckBox, text: str) -> QWidget:
+        """Check box with a label that wraps (QCheckBox text cannot wrap)."""
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        caption = label(text, wrap=True)
+        caption.setCursor(Qt.CursorShape.PointingHandCursor)
+        caption.mousePressEvent = lambda _event: box.toggle()  # clicking the text toggles the box
+        layout.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(caption, 1)
+        box.setAccessibleName(text)
+        return row
+
+    def _watch(self, editor: QWidget) -> None:
+        signal = {QCheckBox: "toggled", QSpinBox: "valueChanged", QComboBox: "currentIndexChanged",
+                  QPlainTextEdit: "textChanged", QLineEdit: "textChanged"}[type(editor)]
+        getattr(editor, signal).connect(lambda *_: self.changed.emit())
+
+    @staticmethod
     def _editor(param: Param) -> QWidget:
         if param.type is ParamType.BOOL:
-            box = QCheckBox(param.label)
+            box = QCheckBox()
             box.setChecked(bool(param.default))
             return box
         if param.type is ParamType.INT:
@@ -45,6 +71,8 @@ class ParamForm(QWidget):
             return spin
         if param.type is ParamType.CHOICE:
             combo = QComboBox()
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(12)
             for value, text in param.choices:
                 combo.addItem(text, value)
             combo.setCurrentIndex(max(combo.findData(param.default), 0))

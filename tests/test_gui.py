@@ -78,21 +78,33 @@ def test_missing_inputs_show_a_message(window):
 
 
 def test_workflow_builder_save_load_run(window, tmp_path):
+    from officeflow.gui.widgets.flow_canvas import START_ID
+
     make_xlsx(tmp_path / "in" / "a.xlsx", [{"Ref": "A"}, {"Ref": " a "}])
     window.navigate("workflow")
     page = window._pages["workflow"]
-    for op_id in ("excel.clean", "excel.remove_duplicates"):
-        page._tools.setCurrentIndex(page._tools.findData(op_id))
-        page._add()
-    page._form.set_values({"columns": "Ref", "save_removed": False})
-    page._name.setText("Tidy")
-    page._save()
+    page.add_step("excel.clean")
+    page.add_step("excel.remove_duplicates")
+    assert list(page.scene.nodes) == [START_ID, *page._uids]          # start node + 2 steps
+    assert len(page.scene.edges) == 3                                 # 2 links + link to "Add step"
+    page.form.set_values({"columns": "Ref", "save_removed": False})   # edits the selected step
+    assert page.steps[1].params["columns"] == "Ref"
+    assert page.scene.nodes[page._uids[1]].data_.subtitle == "Columns to compare: Ref"
+
+    page.undo()
+    assert page.steps[1].params.get("columns", "") == ""
+    page.redo()
+    assert page.steps[1].params["columns"] == "Ref"
+
+    page.name_edit.setText("Tidy")
+    page.save()
+    assert page.badge.text() == "Saved"
     assert window.ctx.db.load_workflow("Tidy")["steps"][1]["params"]["columns"] == "Ref"
 
-    page._new()
-    page._saved.setCurrentIndex(page._saved.findData("Tidy"))
-    page._load_selected()
-    assert len(page._steps) == 2
+    page.new()
+    assert page.steps == [] and page.badge.text() == "Draft"
+    page.load_named("Tidy")
+    assert len(page.steps) == 2 and page.badge.text() == "Saved"
     page.inputs.add_paths([tmp_path / "in"])
     page.panel.output.setText(str(tmp_path / "out"))
     page.run()
@@ -100,6 +112,22 @@ def test_workflow_builder_save_load_run(window, tmp_path):
     assert page.panel.banner_title.text() == "Done", page.panel.banner_text.text()
     result = next((tmp_path / "out" / "02 Remove duplicates").glob("*.xlsx"))
     assert pd.read_excel(result)["Ref"].tolist() == ["A"]
+    assert [page.scene.nodes[u].data_.status for u in page._uids] == ["success", "success"]
+
+
+def test_workflow_builder_flags_incompatible_steps(window):
+    window.navigate("workflow")
+    page = window._pages["workflow"]
+    page.new()
+    page.add_step("pdf.text")
+    page.add_step("pdf.merge")
+    merge = page.scene.nodes[page._uids[1]]
+    assert merge.data_.warning.startswith("Needs .pdf")
+    assert any(edge.broken for edge in page.scene.edges)
+    page.move_step(page._uids[1], -1)        # merge first, then extract text: valid
+    assert not any(edge.broken for edge in page.scene.edges)
+    page.remove_step(page._uids[0])
+    assert [s.op_id for s in page.steps] == ["pdf.text"]
 
 
 def test_folder_fan_keyboard_hover_and_click(window):

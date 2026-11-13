@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
         for page in self._pages.values():
             self._stack.addWidget(page)
         self._pages["dashboard"].navigate.connect(self.navigate)
+        self._pages["workflow"].navigate.connect(self.navigate)
         self._pages["dashboard"].openTool.connect(self.open_tool)
         self._pages["settings"].themeChanged.connect(self._theme_requested)
         body.addWidget(self._stack, 1)
