@@ -56,7 +56,7 @@ npm run build
 npm run e2e
 ```
 
-`pytest` covers the engines, the tools, workflows, the HTTP API and the AI assistant with a fake model (78 tests; no real AI calls). `npm run e2e` starts the real
+`pytest` covers the engines, the tools, workflows, the HTTP API and the AI assistant with a fake model (82 tests; no real AI calls). `npm run e2e` starts the real
 server with sample files and drives the built interface in Chromium through Playwright (organizer
 preview and run, workflow building rules, saving, the AI assistant with a stand-in model, every page,
 no browser errors).
@@ -116,8 +116,14 @@ first step, and each step passes its output files to the next.
 
 ## AI assistant (optional)
 
-Connect an Anthropic API key in **Settings → AI assistant** (default model Claude Opus 5.5; Sonnet 5.5 and
-Haiku 5.5 can be chosen). The assistant does two things only:
+Choose a provider in **Settings → AI assistant** and paste its API key:
+
+- **Anthropic (Claude)** — default model Claude Opus 5.5; Sonnet 5.5 and Haiku 5.5 can be chosen.
+- **OpenAI** — pick any text model available to your account (**Load my models** fetches the list of model
+  names; default `gpt-5`). Requests are sent with `store=false`.
+
+Each provider keeps its own key; switching provider does not delete the other key. The assistant does two
+things only:
 
 - **Create a workflow** from a description. The answer is checked against the real tool list (tool ids,
   settings, and that every step can read the previous step's files); problems are sent back for a fix
@@ -134,9 +140,10 @@ history and logs. **What is sent:** your request text — shown to you exactly b
 file paths and e-mail addresses replaced by placeholders (on by default) — and OfficeFlow's tool list
 (names, settings, file formats). Every request is recorded locally in the assistant's *Activity* list
 (`ai_activity.jsonl` in the data folder). The API key is stored in the data folder, encrypted with Windows
-DPAPI on Windows, and is never sent back to the interface. Requests are billed to your API key; the
-server-side refusal fallback is enabled for Opus 5.5 / Sonnet 5.5 so a declined request is retried on a
-fallback model automatically.
+DPAPI on Windows, and is never sent back to the interface. Requests are billed to your API key. With
+Claude, the server-side refusal fallback is enabled for Opus 5.5 / Sonnet 5.5 so a declined request is
+retried on a fallback model automatically. Whatever the provider, its own data-retention policy applies
+to the request text it receives.
 
 The static plugin check is a review aid, not a sandbox: a plugin runs with your user's permissions, so
 install only code you have read.
@@ -203,7 +210,7 @@ carry the per-launch token, so other web pages open on the computer cannot use i
 officeflow/
 ├── __main__.py            entry point (python -m officeflow)
 ├── desktop.py             starts the server, opens the frameless window, window/dialog/drop bridge
-├── ai/                    assistant.py (Claude requests, answer checks) · privacy.py (redaction, tool
+├── ai/                    assistant.py (Claude and OpenAI providers, answer checks) · privacy.py (redaction, tool
 │                          catalog) · plugin_check.py (static safety check for AI-written plugins)
 ├── server/
 │   ├── app.py             FastAPI routes: tools, jobs, workflows, history, logs, settings, files
@@ -279,7 +286,7 @@ Settings, the SQLite database (history + saved workflows), logs and plugins live
 
 ## Dependencies
 Python: `pandas`, `openpyxl`, `PyMuPDF` (PDF text, tables, pages), `python-docx`, `fastapi` + `uvicorn`
-(local API), `pywebview` (native window on Windows/macOS), `anthropic` (optional AI assistant). Interface: Next.js, React, Framer Motion; the
+(local API), `pywebview` (native window on Windows/macOS), `anthropic` / `openai` (optional AI assistant). Interface: Next.js, React, Framer Motion; the
 Urbanist font (SIL OFL) is bundled, so nothing is loaded from the internet. Word → PDF uses LibreOffice
 or Microsoft Word if installed. Camelot/OpenCV were not needed: PyMuPDF's table finder covers ruled
 tables in text PDFs.

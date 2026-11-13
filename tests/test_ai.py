@@ -53,6 +53,9 @@ class FakeClient:
         self.calls = []
         self.stop_reason = stop_reason
         self.beta = SimpleNamespace(messages=SimpleNamespace(parse=self.parse))
+        self.responses = SimpleNamespace(parse=self.parse_openai)       # OpenAI shape
+        self.models = SimpleNamespace(list=lambda: [SimpleNamespace(id=i) for i in
+                                                    ("gpt-5", "gpt-5-mini", "text-embedding-3-large", "o3", "whisper-1")])
 
     def parse(self, **kwargs):
         self.calls.append({**kwargs, "messages": list(kwargs["messages"])})
@@ -61,6 +64,14 @@ class FakeClient:
                                content=[{"type": "text", "text": answer.model_dump_json()}],
                                usage=SimpleNamespace(input_tokens=100, output_tokens=50,
                                                      cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+
+    def parse_openai(self, **kwargs):
+        self.calls.append({**kwargs, "input": list(kwargs["input"])})
+        answer = self.answers.pop(0)
+        output = [SimpleNamespace(content=[SimpleNamespace(type="refusal")])] if self.stop_reason == "refusal" else []
+        return SimpleNamespace(output_parsed=answer, output=output, status="completed", incomplete_details=None,
+                               usage=SimpleNamespace(input_tokens=80, output_tokens=40))
 
 
 def workflow_answer(steps, missing=()):
@@ -197,7 +208,7 @@ def test_key_is_stored_locally_and_never_returned(client):
 
 def test_ai_job_sends_redacted_text_and_logs_it_locally(client):
     fake = FakeClient(workflow_answer([("pdf.organize", {})]))
-    client.app_ref.state.assistant_factory = lambda key, model: ai.Assistant("k", model, client=fake)
+    client.app_ref.state.assistant_factory = lambda provider, key, model: ai.Assistant("k", model, client=fake)
     job = client.post("/api/ai/jobs", json={"kind": "workflow", "request": r"Sort D:\Scans\2024 by reference"}).json()
     state = wait(client, job)
     assert state["result"]["workflow"]["steps"][0]["op"] == "pdf.organize"
@@ -231,3 +242,62 @@ def test_plugin_that_fails_to_load_is_rolled_back(client):
     response = client.post("/api/plugins", json={"file_name": "broken.py", "code": broken})
     assert response.status_code == 400 and "could not be loaded" in response.json()["detail"]
     assert client.get("/api/plugins").json() == []
+
+
+# -- OpenAI provider ----------------------------------------------------------------------
+def test_openai_workflow_request_shape_and_correction_round():
+    client = FakeClient(workflow_answer([("pdf.organise", {})]), workflow_answer([("pdf.organize", {})]))
+    result = ai.Assistant("key", "gpt-5", client=client, provider="openai").design_workflow("Sort <path-1>")
+    assert result["workflow"]["steps"][0]["op"] == "pdf.organize" and result["rounds"] == 2
+    first = client.calls[0]
+    assert first["model"] == "gpt-5" and first["store"] is False and first["reasoning"] == {"effort": "medium"}
+    assert first["text_format"] is ai.WorkflowAnswer and "pdf.organize" in first["instructions"]
+    assert first["input"] == [{"role": "user", "content": "Sort <path-1>"}]
+    follow_up = client.calls[1]["input"]
+    assert follow_up[1]["role"] == "assistant" and "pdf.organise" in follow_up[1]["content"]
+    assert "unknown tool id" in follow_up[2]["content"]
+    assert result["usage"] == {"input_tokens": 160, "output_tokens": 80}
+
+
+def test_openai_non_reasoning_model_and_refusal():
+    client = FakeClient(ai.PluginAnswer(file_name="count.py", explanation="x", code=GOOD_PLUGIN))
+    ai.Assistant("key", "gpt-4.1", client=client, provider="openai").create_plugin("count pages")
+    assert "reasoning" not in client.calls[0]
+    refusing = FakeClient(workflow_answer([]), stop_reason="refusal")
+    with pytest.raises(ai.AssistantError, match="declined"):
+        ai.Assistant("key", "gpt-5", client=refusing, provider="openai").design_workflow("x")
+
+
+def test_openai_model_list_keeps_text_models_only():
+    assert ai.list_openai_models("key", client=FakeClient()) == ["o3", "gpt-5-mini", "gpt-5"]
+
+
+def test_switch_provider_keys_and_models_through_the_api(client):
+    client.put("/api/ai/key", json={"key": "sk-ant-test-0123456789abcdefAAAA"})
+    client.put("/api/ai/key", json={"key": "sk-proj-test-0123456789abcdefBBBB", "provider": "openai"})
+    status = client.get("/api/ai/status").json()
+    assert status["provider"] == "anthropic" and status["key_hint"] == "…AAAA"
+    assert status["providers"]["openai"] == {"label": "OpenAI", "configured": True, "key_hint": "…BBBB", "sdk": True}
+    client.put("/api/settings", json={"ai_provider": "openai", "ai_openai_model": "gpt-5-mini"})
+    status = client.get("/api/ai/status").json()
+    assert (status["provider"], status["model"], status["key_hint"]) == ("openai", "gpt-5-mini", "…BBBB")
+    assert keystore.load_api_key("openai").endswith("BBBB") and keystore.load_api_key().endswith("AAAA")
+    assert client.put("/api/settings", json={"ai_provider": "other"}).status_code == 400
+    client.app_ref.state.openai_models = lambda key: ai.list_openai_models(key, client=FakeClient())
+    assert client.get("/api/ai/models?provider=openai").json()["models"] == ["o3", "gpt-5-mini", "gpt-5"]
+
+    seen = {}
+    fake = FakeClient(workflow_answer([("pdf.text", {})]))
+
+    def factory(provider, key, model):
+        seen.update(provider=provider, key=key, model=model)
+        return ai.Assistant(key, model, client=fake, provider=provider)
+
+    client.app_ref.state.assistant_factory = factory
+    state = wait(client, client.post("/api/ai/jobs", json={"kind": "workflow", "request": "extract text"}).json())
+    assert state["result"]["workflow"]["steps"][0]["op"] == "pdf.text"
+    assert seen == {"provider": "openai", "key": "sk-proj-test-0123456789abcdefBBBB", "model": "gpt-5-mini"}
+    assert client.get("/api/ai/activity").json()[0]["model"] == "openai/gpt-5-mini"
+    client.delete("/api/ai/key?provider=openai")
+    assert not client.get("/api/ai/status").json()["configured"]
+    assert client.get("/api/ai/status").json()["providers"]["anthropic"]["configured"]

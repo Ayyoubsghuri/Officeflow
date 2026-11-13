@@ -26,6 +26,10 @@ const EXAMPLES: Record<Mode, string[]> = {
   ],
 };
 
+function modelLabel(status: AiStatus, model: string): string {
+  return status.models[model]?.split(" —")[0] ?? model;
+}
+
 function Privacy({ status, redact, onRedact }: { status: AiStatus | null; redact: boolean; onRedact(v: boolean): void }) {
   return (
     <div className="card pad col privacy">
@@ -41,7 +45,7 @@ function Privacy({ status, redact, onRedact }: { status: AiStatus | null; redact
           </ul>
         </div>
         <div>
-          <div className="caption">Sent to {status?.provider ?? "the AI"}</div>
+          <div className="caption">Sent to {status?.provider_label ?? "the AI"}</div>
           <ul className="privacy-list send">
             <li>Your request text — you review it before it leaves</li>
             <li>OfficeFlow’s tool list: names, settings, file formats</li>
@@ -49,6 +53,7 @@ function Privacy({ status, redact, onRedact }: { status: AiStatus | null; redact
         </div>
       </div>
       <Check on={redact} onChange={onRedact} label="Hide file paths and e-mail addresses in my requests automatically" />
+      {status?.provider === "openai" && <div className="help">OpenAI requests are sent with storage turned off (store=false).</div>}
       <div className="help">The AI only designs workflows and writes tools. Nothing it returns runs by itself: workflows open as drafts, and tools are installed only after you read the code and approve.</div>
     </div>
   );
@@ -182,9 +187,9 @@ function Assistant() {
           <div className="muted" style={{ marginTop: 6 }}>Describe what you need. The AI designs a workflow or writes a new tool — your documents never leave this computer.</div>
         </div>
         {status && (status.configured ? (
-          <span className="pill" style={{ height: 40 }}><span className="dot-ok" />Connected · {status.models[status.model]?.split(" —")[0]} · key {status.key_hint}</span>
+          <span className="pill" style={{ height: 40 }}><span className="dot-ok" />Connected · {status.provider_label} · {modelLabel(status, status.model)} · key {status.key_hint}</span>
         ) : (
-          <Link className="btn primary" href="/settings/#ai"><Icon name="key" size={17} />Connect an API key</Link>
+          <Link className="btn primary" href="/settings/#ai"><Icon name="key" size={17} />Connect {status.provider_label}</Link>
         ))}
       </div>
 
@@ -222,7 +227,7 @@ function Assistant() {
                   )}
                   <div className="help">Also sent: the list of OfficeFlow’s {preview.catalog_tools} tools{mode === "plugin" ? " and the plugin rules" : ""}. Nothing else.</div>
                   <div className="row">
-                    <button className="btn primary" onClick={send}><Icon name="send" size={16} />Send to {status?.models[preview.model]?.split(" —")[0] ?? "AI"}</button>
+                    <button className="btn primary" onClick={send}><Icon name="send" size={16} />Send to {status ? modelLabel(status, preview.model) : "AI"}</button>
                     <button className="btn ghost" onClick={() => setPreview(null)}>Edit</button>
                   </div>
                 </motion.div>

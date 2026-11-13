@@ -31,7 +31,7 @@ if os.environ.get("OFFICEFLOW_FAKE_AI"):
     from officeflow.ai import assistant as ai
     from tests.test_ai import GOOD_PLUGIN, FakeClient, workflow_answer
 
-    def factory(key, model):
+    def factory(provider, key, model):
         fake = FakeClient(
             workflow_answer([("pdf.organize", {"patterns": r"\b\d{4}/\d{2}/\d{3}\b"}), ("pdf.search", {"find": "Total"})],
                             missing=[{"name": "OCR", "description": "Read scanned PDFs.", "reads": [".pdf"],
@@ -43,7 +43,8 @@ if os.environ.get("OFFICEFLOW_FAKE_AI"):
                 fake.answers.pop(0)          # skip the workflow answer
                 return super().create_plugin(request)
 
-        return Picker(key or "fake", model, client=fake)
+        return Picker(key or "fake", model, client=fake, provider=provider)
 
     app.state.assistant_factory = factory
+    app.state.openai_models = lambda key: ai.list_openai_models(key, client=FakeClient())
 uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

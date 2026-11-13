@@ -131,6 +131,33 @@ try {
   await page.waitForSelector(".activity");
   check((await page.$$(".activity")).length === 2, "activity log lists what was sent");
 
+  // Switch to OpenAI: separate key, model list from the account, same review-before-send flow.
+  await page.goto(`${base}/settings/`);
+  await page.click("#ai .segmented button:has-text('OpenAI')");
+  await page.waitForSelector("#ai label:has-text('OpenAI API key')");
+  await page.fill("#ai input[type=password]", "sk-proj-test-0123456789abcdefOPEN");
+  await page.click("#ai button:has-text('Save')");
+  await page.waitForSelector("#ai .tag.green:has-text('OpenAI')");
+  await page.click("#ai button:has-text('Load my models')");
+  await page.waitForSelector("#ai select option[value='gpt-5-mini']", { state: "attached" });
+  await page.selectOption("#ai select", "gpt-5-mini");
+  await page.waitForTimeout(400);
+  await shot(page, "openai-settings");
+  await page.goto(`${base}/assistant/`);
+  await page.waitForSelector(".pill:has-text('OpenAI')");
+  check((await page.textContent(".pill:has-text('OpenAI')")).includes("gpt-5-mini"), "assistant shows the OpenAI model");
+  await page.fill(".prompt", "Sort PDFs by reference");
+  await page.click("button:has-text('Review before sending')");
+  await page.waitForSelector(".sendbox button:has-text('gpt-5-mini')");
+  await page.click(".sendbox button.primary");
+  await page.waitForSelector("text=Open in Workflow Builder", { timeout: 20000 });
+  check(true, "OpenAI provider designs a workflow");
+  await page.goto(`${base}/assistant/`);
+  await page.waitForSelector(".activity");
+  check((await page.textContent(".activity")).length > 0 &&
+    (await page.$$eval(".activity .faint", (els) => els.some((e) => e.textContent.includes("openai/gpt-5-mini")))),
+    "activity log records the OpenAI request");
+
   for (const path of ["/toolbox/?cat=word", "/history/", "/logs/", "/settings/"]) {
     await page.goto(`${base}${path}`);
     await page.waitForTimeout(500);

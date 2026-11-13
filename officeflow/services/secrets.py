@@ -62,27 +62,51 @@ def _unprotect(kind: str, value: str) -> bytes:
     return raw
 
 
-def save_api_key(key: str) -> None:
-    kind, value = _protect(key.strip().encode())
+_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+
+
+def _entries() -> dict:
+    try:
+        data = json.loads(_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, ValueError, OSError):
+        return {}
+
+
+def _write(entries: dict) -> None:
     file = _file()
-    file.write_text(json.dumps({"anthropic_api_key": {"kind": kind, "value": value}}), encoding="utf-8")
+    if not entries:
+        file.unlink(missing_ok=True)
+        return
+    file.write_text(json.dumps(entries), encoding="utf-8")
     if sys.platform != "win32":
         os.chmod(file, 0o600)
 
 
-def load_api_key() -> str:
-    """Stored key, else the ANTHROPIC_API_KEY environment variable, else ""."""
-    try:
-        entry = json.loads(_file().read_text(encoding="utf-8"))["anthropic_api_key"]
-        return _unprotect(entry["kind"], entry["value"]).decode()
-    except (FileNotFoundError, KeyError, ValueError, OSError):
-        return os.environ.get("ANTHROPIC_API_KEY", "")
+def save_api_key(key: str, provider: str = "anthropic") -> None:
+    kind, value = _protect(key.strip().encode())
+    entries = _entries()
+    entries[f"{provider}_api_key"] = {"kind": kind, "value": value}
+    _write(entries)
 
 
-def delete_api_key() -> None:
-    _file().unlink(missing_ok=True)
+def load_api_key(provider: str = "anthropic") -> str:
+    """Stored key for the provider, else its environment variable, else ""."""
+    entry = _entries().get(f"{provider}_api_key")
+    if entry:
+        try:
+            return _unprotect(entry["kind"], entry["value"]).decode()
+        except (KeyError, ValueError, OSError):
+            pass
+    return os.environ.get(_ENV.get(provider, ""), "")
 
 
-def key_hint() -> str:
-    key = load_api_key()
+def delete_api_key(provider: str = "anthropic") -> None:
+    entries = _entries()
+    entries.pop(f"{provider}_api_key", None)
+    _write(entries)
+
+
+def key_hint(provider: str = "anthropic") -> str:
+    key = load_api_key(provider)
     return f"…{key[-4:]}" if len(key) >= 8 else ""

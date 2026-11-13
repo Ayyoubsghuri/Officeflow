@@ -18,7 +18,9 @@ class Settings:
     output_dir: str = ""
     include_subfolders: bool = True
     last_input_dir: str = ""
+    ai_provider: str = "anthropic"   # anthropic | openai
     ai_model: str = "claude-opus-5-5"
+    ai_openai_model: str = "gpt-5"
     ai_redact: bool = True           # replace file paths / e-mails in AI requests
 
     def resolved_output_dir(self) -> Path:

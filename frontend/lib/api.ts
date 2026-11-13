@@ -47,15 +47,22 @@ export interface Settings {
   last_input_dir: string;
   ai_model: string;
   ai_redact: boolean;
+  ai_provider: "anthropic" | "openai";
+  ai_openai_model: string;
 }
 
+export type AiProvider = "anthropic" | "openai";
+
 export interface AiStatus {
+  provider: AiProvider;
+  provider_label: string;
   configured: boolean;
   key_hint: string;
   sdk: boolean;
-  provider: string;
   model: string;
-  models: Record<string, string>;
+  models: Record<string, string>;       // Claude models
+  openai_model: string;
+  providers: Record<AiProvider, { label: string; configured: boolean; key_hint: string; sdk: boolean }>;
   redact: boolean;
 }
 
@@ -64,6 +71,8 @@ export interface AiPreview {
   replaced: { kind: string; original: string; placeholder: string }[];
   catalog_tools: number;
   model: string;
+  provider: AiProvider;
+  provider_label: string;
 }
 
 export interface PluginCheck {

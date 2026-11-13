@@ -164,41 +164,28 @@ class AssistantError(OperationError):
     pass
 
 
-def _client(api_key: str):
-    import anthropic
-
-    return anthropic.Anthropic(api_key=api_key, max_retries=2, timeout=300)
-
-
-def _readable(exc: Exception) -> str:
-    import anthropic
-
-    if isinstance(exc, anthropic.AuthenticationError):
-        return "The API key was rejected. Check it in Settings → AI assistant."
-    if isinstance(exc, anthropic.PermissionDeniedError):
-        return "This API key is not allowed to use the selected model."
-    if isinstance(exc, anthropic.NotFoundError):
-        return "The selected model is not available for this API key. Choose another model in Settings."
-    if isinstance(exc, anthropic.RateLimitError):
-        return "The AI service is busy or the usage limit was reached. Try again in a minute."
-    if isinstance(exc, anthropic.BadRequestError):
-        return f"The AI service rejected the request: {exc.message}"
-    if isinstance(exc, anthropic.APIStatusError):
-        return f"The AI service returned an error ({exc.status_code}). Try again later."
-    if isinstance(exc, anthropic.APIConnectionError):
-        return "Cannot reach the AI service. Check the internet connection."
-    return f"AI request failed: {exc}"
+PROVIDERS = {"anthropic": "Anthropic (Claude)", "openai": "OpenAI"}
+OPENAI_DEFAULT_MODEL = "gpt-5"
+_OPENAI_REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
-class Assistant:
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, client: Any = None) -> None:
-        if not api_key and client is None:
-            raise AssistantError("Add an API key in Settings → AI assistant first.")
+# -- providers -------------------------------------------------------------------------
+# Each provider sends one structured request and returns (history entry for a follow-up
+# correction, parsed answer, token usage). Only the system text (tool catalog / plugin
+# rules) and the messages built from the user's redacted request are ever sent.
+
+class AnthropicProvider:
+    name = "anthropic"
+
+    def __init__(self, api_key: str, model: str, client: Any = None) -> None:
         self.model = model if model in MODELS else DEFAULT_MODEL
-        self._client = client or _client(api_key)
+        if client is None:
+            import anthropic
 
-    # -- transport ---------------------------------------------------------------------
-    def _ask(self, system: str, messages: list[dict[str, Any]], answer: type[BaseModel], effort: str):
+            client = anthropic.Anthropic(api_key=api_key, max_retries=2, timeout=300)
+        self._client = client
+
+    def ask(self, system: str, messages: list[dict[str, Any]], answer: type[BaseModel], effort: str):
         options: dict[str, Any] = {}
         if self.model in _FALLBACK_MODELS:
             options.update(betas=[_FALLBACK_BETA], fallbacks="default")
@@ -208,18 +195,125 @@ class Assistant:
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                 messages=messages, output_format=answer, output_config={"effort": effort}, **options)
         except Exception as exc:  # noqa: BLE001 - mapped to a readable message
-            if isinstance(exc, OperationError):
-                raise
             log.warning("AI request failed: %s", exc)
-            raise AssistantError(_readable(exc)) from None
+            raise AssistantError(_readable_anthropic(exc)) from None
         if response.stop_reason == "refusal":
             raise AssistantError("The AI declined this request. Rephrase it and try again.")
         if response.stop_reason == "max_tokens":
             raise AssistantError("The answer was too long. Ask for a smaller tool or workflow.")
-        parsed = response.parsed_output
+        if response.parsed_output is None:
+            raise AssistantError("The AI returned an answer that could not be read. Try again.")
+        tokens = getattr(response, "usage", None)
+        usage = {
+            "input_tokens": sum(getattr(tokens, k, 0) or 0 for k in
+                                ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")),
+            "output_tokens": getattr(tokens, "output_tokens", 0) or 0,
+        }
+        return {"role": "assistant", "content": response.content}, response.parsed_output, usage
+
+
+class OpenAIProvider:
+    name = "openai"
+
+    def __init__(self, api_key: str, model: str, client: Any = None) -> None:
+        self.model = (model or OPENAI_DEFAULT_MODEL).strip()
+        if client is None:
+            import openai
+
+            client = openai.OpenAI(api_key=api_key, max_retries=2, timeout=300)
+        self._client = client
+
+    def _reasoning(self) -> bool:
+        return self.model.startswith(_OPENAI_REASONING_PREFIXES)
+
+    def ask(self, system: str, messages: list[dict[str, Any]], answer: type[BaseModel], effort: str):
+        options: dict[str, Any] = {}
+        if self._reasoning():
+            options["reasoning"] = {"effort": effort}
+        try:
+            response = self._client.responses.parse(
+                model=self.model, instructions=system, input=messages, text_format=answer,
+                max_output_tokens=32000, store=False, **options)   # store=False: OpenAI keeps no copy to reuse
+        except Exception as exc:  # noqa: BLE001 - mapped to a readable message
+            log.warning("AI request failed: %s", exc)
+            raise AssistantError(_readable_openai(exc)) from None
+        for item in getattr(response, "output", None) or []:
+            for part in getattr(item, "content", None) or []:
+                if getattr(part, "type", "") == "refusal":
+                    raise AssistantError("The AI declined this request. Rephrase it and try again.")
+        if getattr(response, "status", "") == "incomplete":
+            reason = getattr(getattr(response, "incomplete_details", None), "reason", "")
+            raise AssistantError("The answer was too long. Ask for a smaller tool or workflow."
+                                 if reason == "max_output_tokens" else "The AI stopped before finishing. Try again.")
+        parsed = response.output_parsed
         if parsed is None:
             raise AssistantError("The AI returned an answer that could not be read. Try again.")
-        return response, parsed
+        tokens = getattr(response, "usage", None)
+        usage = {"input_tokens": getattr(tokens, "input_tokens", 0) or 0,
+                 "output_tokens": getattr(tokens, "output_tokens", 0) or 0}
+        return {"role": "assistant", "content": parsed.model_dump_json()}, parsed, usage
+
+
+def list_openai_models(api_key: str, client: Any = None) -> list[str]:
+    """Text models available to this key (only the model list is requested)."""
+    if client is None:
+        import openai
+
+        client = openai.OpenAI(api_key=api_key, max_retries=1, timeout=30)
+    try:
+        ids = [m.id for m in client.models.list()]
+    except Exception as exc:  # noqa: BLE001
+        raise AssistantError(_readable_openai(exc)) from None
+    skip = ("embedding", "whisper", "tts", "dall-e", "image", "audio", "realtime", "transcribe", "moderation",
+            "search", "davinci", "babbage")
+    text = [i for i in ids if i.startswith(("gpt-", "o1", "o3", "o4")) and not any(k in i for k in skip)]
+    return sorted(text, reverse=True)
+
+
+def _readable_anthropic(exc: Exception) -> str:
+    import anthropic
+
+    return _readable(exc, anthropic)
+
+
+def _readable_openai(exc: Exception) -> str:
+    import openai
+
+    return _readable(exc, openai)
+
+
+def _readable(exc: Exception, sdk) -> str:
+    if isinstance(exc, sdk.AuthenticationError):
+        return "The API key was rejected. Check it in Settings → AI assistant."
+    if isinstance(exc, sdk.PermissionDeniedError):
+        return "This API key is not allowed to use the selected model."
+    if isinstance(exc, sdk.NotFoundError):
+        return "The selected model is not available for this API key. Choose another model in Settings."
+    if isinstance(exc, sdk.RateLimitError):
+        return "The AI service is busy or the usage limit was reached. Try again in a minute."
+    if isinstance(exc, sdk.BadRequestError):
+        return f"The AI service rejected the request: {getattr(exc, 'message', exc)}"
+    if isinstance(exc, sdk.APIStatusError):
+        return f"The AI service returned an error ({exc.status_code}). Try again later."
+    if isinstance(exc, sdk.APIConnectionError):
+        return "Cannot reach the AI service. Check the internet connection."
+    return f"AI request failed: {exc}"
+
+
+class Assistant:
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, client: Any = None,
+                 provider: str = "anthropic") -> None:
+        if not api_key and client is None:
+            raise AssistantError("Add an API key in Settings → AI assistant first.")
+        if provider not in PROVIDERS:
+            raise AssistantError(f"Unknown AI provider {provider!r}.")
+        backend = OpenAIProvider if provider == "openai" else AnthropicProvider
+        self._provider = backend(api_key, model, client)
+        self.provider = provider
+        self.model = self._provider.model
+
+    def _ask(self, system: str, messages: list[dict[str, Any]], answer: type[BaseModel], effort: str):
+        return self._provider.ask(system, messages, answer, effort)
 
     # -- workflows ---------------------------------------------------------------------
     def design_workflow(self, request: str) -> dict[str, Any]:
@@ -227,14 +321,14 @@ class Assistant:
         messages: list[dict[str, Any]] = [{"role": "user", "content": request}]
         usage = {"input_tokens": 0, "output_tokens": 0}
         for round_ in range(MAX_FIX_ROUNDS + 1):
-            response, answer = self._ask(system, messages, WorkflowAnswer, "medium")
-            self._count(usage, response)
+            reply, answer, used = self._ask(system, messages, WorkflowAnswer, "medium")
+            self._count(usage, used)
             workflow, problems, notes = self._build_workflow(answer)
             if not problems:
                 return {"kind": "workflow", "name": workflow.name, "explanation": answer.explanation,
                         "workflow": workflow.to_dict(), "notes": notes, "rounds": round_ + 1, "usage": usage,
                         "missing_tools": [m.model_dump() for m in answer.missing_tools]}
-            messages += [{"role": "assistant", "content": response.content},
+            messages += [reply,
                          {"role": "user", "content": "OfficeFlow checked this workflow and found problems:\n- "
                           + "\n- ".join(problems) + "\nReturn a corrected answer."}]
         raise AssistantError("The AI could not produce a valid workflow: " + "; ".join(problems))
@@ -283,8 +377,8 @@ class Assistant:
         usage = {"input_tokens": 0, "output_tokens": 0}
         check = CheckResult(ok=False)
         for round_ in range(MAX_FIX_ROUNDS + 1):
-            response, answer = self._ask(system, messages, PluginAnswer, "high")
-            self._count(usage, response)
+            reply, answer, used = self._ask(system, messages, PluginAnswer, "high")
+            self._count(usage, used)
             check = check_plugin(answer.code, builtin)
             if check.ok:
                 name = answer.file_name.strip().lower().replace(" ", "_")
@@ -293,19 +387,16 @@ class Assistant:
                     name += ".py"
                 return {"kind": "plugin", "file_name": name, "explanation": answer.explanation,
                         "code": answer.code, "check": check.__dict__, "rounds": round_ + 1, "usage": usage}
-            messages += [{"role": "assistant", "content": response.content},
+            messages += [reply,
                          {"role": "user", "content": "The OfficeFlow safety check rejected the code:\n- "
                           + "\n- ".join(check.errors) + "\nReturn corrected code that follows every rule."}]
         raise AssistantError("The AI could not produce a plugin that passes the safety check: "
                              + "; ".join(check.errors))
 
     @staticmethod
-    def _count(usage: dict[str, int], response) -> None:
-        tokens = getattr(response, "usage", None)
-        if tokens is not None:
-            usage["input_tokens"] += (getattr(tokens, "input_tokens", 0) or 0) + (
-                getattr(tokens, "cache_read_input_tokens", 0) or 0) + (getattr(tokens, "cache_creation_input_tokens", 0) or 0)
-            usage["output_tokens"] += getattr(tokens, "output_tokens", 0) or 0
+    def _count(usage: dict[str, int], used: dict[str, int]) -> None:
+        usage["input_tokens"] += used.get("input_tokens", 0)
+        usage["output_tokens"] += used.get("output_tokens", 0)
 
 
 # -- local audit log -------------------------------------------------------------------------

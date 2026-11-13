@@ -4,46 +4,96 @@ import { useCallback, useEffect, useState } from "react";
 import FileBrowser from "@/components/FileBrowser";
 import Icon from "@/components/Icon";
 import { Check } from "@/components/ParamForm";
-import { api, type AiStatus, type PluginFile } from "@/lib/api";
+import { motion } from "framer-motion";
+import { api, type AiProvider, type AiStatus, type PluginFile } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
 import { openPath } from "@/lib/desktop";
 import { nativePick } from "@/lib/pick";
 
+const KEY_HELP: Record<AiProvider, string> = {
+  anthropic: "Create one at console.anthropic.com.",
+  openai: "Create one at platform.openai.com → API keys.",
+};
+
 function AiSettings() {
   const { settings, saveSettings, toast } = useApp();
   const [status, setStatus] = useState<AiStatus | null>(null);
-  const [key, setKey] = useState("");
-  useEffect(() => { api<AiStatus>("GET", "/api/ai/status").then(setStatus).catch(() => {}); }, []);
-  const save = async () => {
+  const [keys, setKeys] = useState<Record<AiProvider, string>>({ anthropic: "", openai: "" });
+  const [openaiModels, setOpenaiModels] = useState<string[]>([]);
+  const refresh = useCallback(() => api<AiStatus>("GET", "/api/ai/status").then(setStatus).catch(() => {}), []);
+  useEffect(() => { refresh(); }, [refresh, settings?.ai_provider, settings?.ai_openai_model]);
+
+  const loadModels = useCallback(async (quiet = false) => {
     try {
-      setStatus(await api<AiStatus>("PUT", "/api/ai/key", { key }));
-      setKey("");
+      setOpenaiModels((await api<{ models: string[] }>("GET", "/api/ai/models?provider=openai")).models);
+    } catch (e) {
+      if (!quiet) toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  }, [toast]);
+  useEffect(() => {
+    if (status?.providers.openai.configured && settings?.ai_provider === "openai" && !openaiModels.length) loadModels(true);
+  }, [status, settings?.ai_provider, openaiModels.length, loadModels]);
+
+  const save = async (provider: AiProvider) => {
+    try {
+      setStatus(await api<AiStatus>("PUT", "/api/ai/key", { key: keys[provider], provider }));
+      setKeys((k) => ({ ...k, [provider]: "" }));
       toast("API key saved on this computer.");
+      if (provider === "openai") loadModels(true);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     }
   };
   if (!status || !settings) return null;
+  const provider = settings.ai_provider;
+  const info = status.providers[provider];
   return (
     <section className="card pad col" id="ai">
       <div className="row"><div className="h2 grow">AI assistant</div>
-        {status.configured ? <span className="tag green">Connected · key {status.key_hint}</span> : <span className="tag">Not connected</span>}</div>
+        {info.configured ? <span className="tag green">Connected · {info.label} · key {info.key_hint}</span> : <span className="tag">Not connected</span>}</div>
       <div className="muted">Optional. The AI designs workflows and writes plugin tools. It receives only your request text and OfficeFlow’s list of tools — never your files, file names, paths or history.</div>
       <div className="field">
-        <label>Anthropic API key</label>
-        <div className="row">
-          <input className="input" type="password" autoComplete="off" value={key} placeholder={status.configured ? "Enter a new key to replace the saved one" : "sk-ant-…"}
-            onChange={(e) => setKey(e.target.value)} />
-          <button className="btn primary" disabled={!key.trim()} onClick={save}><Icon name="key" size={17} />Save</button>
-          {status.configured && <button className="btn danger" onClick={async () => setStatus(await api<AiStatus>("DELETE", "/api/ai/key"))}><Icon name="trash" size={16} />Remove</button>}
+        <label>Provider</label>
+        <div className="segmented">
+          {(Object.keys(status.providers) as AiProvider[]).map((name) => (
+            <button key={name} className={provider === name ? "on" : ""} onClick={() => saveSettings({ ai_provider: name })}>
+              <Icon name="sparkle" size={16} />{status.providers[name].label}
+              {status.providers[name].configured && <span className="dot-ok" style={{ marginLeft: 4 }} />}
+              {provider === name && <motion.span layoutId="provider-seg" className="seg-bg" />}
+            </button>
+          ))}
         </div>
-        <div className="help">Create one at console.anthropic.com. It is stored only on this computer (encrypted with your Windows account on Windows) and is never shown again.</div>
+      </div>
+      <div className="field">
+        <label>{info.label} API key</label>
+        <div className="row">
+          <input className="input" type="password" autoComplete="off" value={keys[provider]}
+            placeholder={info.configured ? "Enter a new key to replace the saved one" : provider === "openai" ? "sk-…" : "sk-ant-…"}
+            onChange={(e) => setKeys((k) => ({ ...k, [provider]: e.target.value }))} />
+          <button className="btn primary" disabled={!keys[provider].trim()} onClick={() => save(provider)}><Icon name="key" size={17} />Save</button>
+          {info.configured && <button className="btn danger" onClick={async () => setStatus(await api<AiStatus>("DELETE", `/api/ai/key?provider=${provider}`))}>
+            <Icon name="trash" size={16} />Remove</button>}
+        </div>
+        <div className="help">{KEY_HELP[provider]} Keys are stored only on this computer (encrypted with your Windows account on Windows) and are never shown again. Each provider keeps its own key.</div>
+        {!info.sdk && <div className="banner failed">The {info.label} library is not installed. Run: pip install -r requirements.txt</div>}
       </div>
       <div className="field">
         <label>Model</label>
-        <select className="select" value={settings.ai_model} onChange={(e) => saveSettings({ ai_model: e.target.value })}>
-          {Object.entries(status.models).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-        </select>
+        {provider === "anthropic" ? (
+          <select className="select" value={settings.ai_model} onChange={(e) => saveSettings({ ai_model: e.target.value })}>
+            {Object.entries(status.models).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        ) : (
+          <>
+            <div className="row">
+              <select className="select" value={settings.ai_openai_model} onChange={(e) => saveSettings({ ai_openai_model: e.target.value })}>
+                {[...new Set([settings.ai_openai_model, ...openaiModels])].map((id) => <option key={id} value={id}>{id}</option>)}
+              </select>
+              <button className="btn" disabled={!info.configured} onClick={() => loadModels()}><Icon name="refresh" size={16} />Load my models</button>
+            </div>
+            <div className="help">The list comes from your OpenAI account (only the list of model names is requested).</div>
+          </>
+        )}
       </div>
       <Check on={settings.ai_redact} label="Hide file paths and e-mail addresses in my requests automatically" onChange={(v) => saveSettings({ ai_redact: v })} />
     </section>

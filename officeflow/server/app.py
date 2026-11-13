@@ -56,10 +56,13 @@ class SettingsBody(BaseModel):
     last_input_dir: str | None = None
     ai_model: str | None = None
     ai_redact: bool | None = None
+    ai_provider: str | None = None
+    ai_openai_model: str | None = None
 
 
 class KeyBody(BaseModel):
     key: str
+    provider: str = "anthropic"
 
 
 class AiRequestBody(BaseModel):
@@ -199,7 +202,8 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         s: Settings = app.state.settings
         return {"theme": s.theme, "output_dir": str(s.resolved_output_dir()),
                 "include_subfolders": s.include_subfolders, "last_input_dir": s.last_input_dir,
-                "ai_model": s.ai_model, "ai_redact": s.ai_redact}
+                "ai_model": s.ai_model, "ai_redact": s.ai_redact, "ai_provider": s.ai_provider,
+                "ai_openai_model": s.ai_openai_model}
 
     @app.put("/api/settings", dependencies=[api])
     def put_settings(body: SettingsBody) -> dict[str, Any]:
@@ -207,6 +211,12 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         for key, value in body.model_dump(exclude_none=True).items():
             if key == "ai_model" and value not in ai.MODELS:
                 raise OperationError(f"Unknown model {value!r}.")
+            if key == "ai_provider" and value not in ai.PROVIDERS:
+                raise OperationError(f"Unknown AI provider {value!r}.")
+            if key == "ai_openai_model":
+                value = value.strip()
+                if not value or len(value) > 100 or any(c.isspace() for c in value):
+                    raise OperationError("Enter an OpenAI model name, for example gpt-5.")
             setattr(s, key, value)
         s.save()
         return get_settings()
@@ -415,38 +425,67 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         return {"ok": True}
 
     # -- AI assistant ----------------------------------------------------------------
-    app.state.assistant_factory = lambda key, model: ai.Assistant(key, model)
+    app.state.assistant_factory = lambda provider, key, model: ai.Assistant(key, model, provider=provider)
+
+    def active_model(s: Settings) -> str:
+        return s.ai_openai_model if s.ai_provider == "openai" else s.ai_model
+
+    def sdk_ready(provider: str) -> bool:
+        try:
+            __import__("openai" if provider == "openai" else "anthropic")
+            return True
+        except ImportError:
+            return False
 
     @app.get("/api/ai/status", dependencies=[api])
     def ai_status() -> dict[str, Any]:
         s: Settings = app.state.settings
-        try:
-            import anthropic  # noqa: F401
-            sdk = True
-        except ImportError:
-            sdk = False
-        return {"configured": bool(keystore.load_api_key()), "key_hint": keystore.key_hint(), "sdk": sdk,
-                "provider": "Anthropic (Claude)", "model": s.ai_model, "models": ai.MODELS, "redact": s.ai_redact}
+        providers = {name: {"label": label, "configured": bool(keystore.load_api_key(name)),
+                            "key_hint": keystore.key_hint(name), "sdk": sdk_ready(name)}
+                     for name, label in ai.PROVIDERS.items()}
+        current = providers[s.ai_provider]
+        return {"provider": s.ai_provider, "provider_label": current["label"], "configured": current["configured"],
+                "key_hint": current["key_hint"], "sdk": current["sdk"], "model": active_model(s),
+                "models": ai.MODELS, "openai_model": s.ai_openai_model, "providers": providers, "redact": s.ai_redact}
+
+    def check_provider(name: str) -> str:
+        if name not in ai.PROVIDERS:
+            raise OperationError(f"Unknown AI provider {name!r}.")
+        return name
 
     @app.put("/api/ai/key", dependencies=[api])
     def save_key(body: KeyBody) -> dict[str, Any]:
         key = body.key.strip()
         if len(key) < 20 or any(c.isspace() for c in key):
             raise OperationError("That does not look like an API key.")
-        keystore.save_api_key(key)
+        keystore.save_api_key(key, check_provider(body.provider))
         return ai_status()
 
     @app.delete("/api/ai/key", dependencies=[api])
-    def delete_key() -> dict[str, Any]:
-        keystore.delete_api_key()
+    def delete_key(provider: str = "anthropic") -> dict[str, Any]:
+        keystore.delete_api_key(check_provider(provider))
         return ai_status()
+
+    @app.get("/api/ai/models", dependencies=[api])
+    def ai_models(provider: str = "openai") -> dict[str, Any]:
+        """Models the provider offers to this key (only the model list is requested)."""
+        if check_provider(provider) == "anthropic":
+            return {"models": list(ai.MODELS)}
+        key = keystore.load_api_key("openai")
+        if not key:
+            raise OperationError("Add an OpenAI API key first.")
+        return {"models": app.state.openai_models(key)}
+
+    app.state.openai_models = ai.list_openai_models
 
     @app.post("/api/ai/preview", dependencies=[api])
     def ai_preview(body: AiRequestBody) -> dict[str, Any]:
         """Exactly what would be sent — nothing is sent by this call."""
         redaction = privacy.redact(body.request) if app.state.settings.ai_redact else privacy.Redaction(body.request)
+        s: Settings = app.state.settings
         return {"sent": redaction.text, "replaced": redaction.replaced, "catalog_tools": len(privacy.catalog()),
-                "model": app.state.settings.ai_model}
+                "model": active_model(s), "provider": s.ai_provider,
+                "provider_label": ai.PROVIDERS[s.ai_provider]}
 
     @app.post("/api/ai/jobs", dependencies=[api])
     def ai_job(body: AiRequestBody) -> dict[str, Any]:
@@ -456,7 +495,8 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
             raise OperationError("Describe what you want first.")
         settings: Settings = app.state.settings
         text = privacy.redact(body.request).text if settings.ai_redact else body.request
-        assistant = app.state.assistant_factory(keystore.load_api_key(), settings.ai_model)
+        provider = settings.ai_provider
+        assistant = app.state.assistant_factory(provider, keystore.load_api_key(provider), active_model(settings))
 
         def task(ctx):
             ctx.progress(0, 0, "Asking the AI…")
@@ -468,9 +508,9 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
                     answer = assistant.create_plugin(text)
                     outcome = f"plugin {answer['file_name']}"
             except OperationError as exc:
-                ai.record(body.kind, assistant.model, text, f"failed: {exc}")
+                ai.record(body.kind, f"{provider}/{assistant.model}", text, f"failed: {exc}")
                 raise
-            ai.record(body.kind, assistant.model, text, outcome, answer.get("usage"))
+            ai.record(body.kind, f"{provider}/{assistant.model}", text, outcome, answer.get("usage"))
             answer["sent"] = text
             return answer
 
