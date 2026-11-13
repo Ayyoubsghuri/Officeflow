@@ -132,7 +132,8 @@ class DashboardPage(QWidget):
             stat = self._stats.get(op.id)
             runs = stat["runs"] if stat else 0
             caption = f"{registry.CATEGORIES[op.category]} · {runs} run{'s' if runs != 1 else ''}"
-            items.append(FanItem(op.id, op.name, caption, f"{round(100 * stat['ok'] / runs)}%" if runs else "New"))
+            items.append(FanItem(op.id, op.name, caption,
+                                 f"{round(100 * stat['ok'] / runs)}%" if runs else "New", op.category))
         self.fan.set_items(items, self.fan.selected_id() or "pdf.organize")
         self._show_tool(self.fan.selected_id())
 

@@ -100,3 +100,27 @@ def test_workflow_builder_save_load_run(window, tmp_path):
     assert page.panel.banner_title.text() == "Done", page.panel.banner_text.text()
     result = next((tmp_path / "out" / "02 Remove duplicates").glob("*.xlsx"))
     assert pd.read_excel(result)["Ref"].tolist() == ["A"]
+
+
+def test_folder_fan_keyboard_hover_and_click(window):
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtTest import QTest
+
+    window.navigate("dashboard")
+    fan = window._pages["dashboard"].fan
+    start = fan.selected_id()
+    QTest.keyClick(fan, Qt.Key.Key_Right)
+    assert fan.selected_id() != start
+    opened = []
+    fan.activated.connect(opened.append)
+    QTest.keyClick(fan, Qt.Key.Key_Return)
+    assert opened == [fan.selected_id()]
+    for _ in range(40):  # let the lift animation settle, then click the green folder
+        QApplication.processEvents()
+        time.sleep(0.02)
+    fan.grab()
+    card = next(c for c in fan._cards if c.index == fan._selected)
+    inside = card.quad.boundingRect().center() + QPointF(card.quad.boundingRect().width() * 0.25, 0)
+    assert fan._index_at(QPointF(inside)) == fan._selected
+    QTest.mouseClick(fan, Qt.MouseButton.LeftButton, pos=inside.toPoint())
+    assert opened[-1] == fan.selected_id()
