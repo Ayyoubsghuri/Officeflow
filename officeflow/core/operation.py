@@ -51,6 +51,7 @@ class Param:
     minimum: int = 0
     maximum: int = 1_000_000
     placeholder: str = ""
+    extensions: tuple[str, ...] = ()   # for FILE parameters: accepted file types
 
     def coerce(self, value: Any) -> Any:
         if value is None:
@@ -79,6 +80,12 @@ class Param:
             text = text.strip()
         if self.required and not text.strip():
             raise OperationError(f"“{self.label}” is required.")
+        if self.type is ParamType.FILE and text:
+            path = Path(text)
+            if not path.is_file():
+                raise OperationError(f"“{self.label}”: file not found: {text}")
+            if self.extensions and path.suffix.lower() not in self.extensions:
+                raise OperationError(f"“{self.label}” must be a {', '.join(self.extensions)} file.")
         return text
 
 

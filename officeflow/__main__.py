@@ -7,12 +7,12 @@ import sys
 
 def main() -> int:
     try:
-        from officeflow.app import run
+        from officeflow.desktop import main as desktop_main
     except ImportError as exc:
         print(f"OfficeFlow cannot start: {exc}\nInstall the requirements: pip install -r requirements.txt",
               file=sys.stderr)
         return 1
-    return run()
+    return desktop_main()
 
 
 if __name__ == "__main__":
