@@ -136,6 +136,25 @@ def _watch_drops(window) -> None:
     window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
 
 
+def self_check() -> int:
+    """Load the native window library and its platform backend without opening a window."""
+    try:
+        import webview  # noqa: F401
+
+        if sys.platform == "win32":
+            import webview.platforms.winforms  # noqa: F401 - loads .NET and the WebView2 components
+        from officeflow.core import registry
+
+        registry.load_builtin()
+        if len(registry.all_operations()) < 20:
+            raise RuntimeError(f"only {len(registry.all_operations())} tools loaded")
+    except Exception as exc:  # noqa: BLE001
+        print(f"self-check failed: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        return 1
+    print("self-check ok")
+    return 0
+
+
 def webview_storage() -> Path:
     """Browser cache/profile of the desktop window, one folder per OfficeFlow version.
 
@@ -166,9 +185,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--serve", action="store_true", help="only run the API server (development)")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--token", default="", help="fixed API token (development)")
+    parser.add_argument("--self-check", action="store_true",
+                        help="check that the desktop window components load, then exit (used by the build)")
     parser.add_argument("--debug", action="store_true",
                         help="open the developer tools in the window (to see interface errors)")
     args = parser.parse_args(argv)
+
+    if args.self_check:
+        return self_check()
 
     from officeflow.server.app import create_app
 

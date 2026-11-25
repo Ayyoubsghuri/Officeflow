@@ -5,6 +5,31 @@ Select files or folders, configure a tool, preview what will happen, run it in t
 and chain tools into reusable workflows. Original files are never modified unless you explicitly
 choose "move".
 
+## Download (Windows)
+
+Open the repository's **Releases** page and download either:
+
+- `OfficeFlow-Setup-<version>.exe` — installer (no administrator rights needed; Start menu and optional
+  desktop shortcut; uninstall from Windows Settings → Apps), or
+- `OfficeFlow-<version>-portable.zip` — unzip anywhere and run `OfficeFlow\OfficeFlow.exe`.
+
+Python and Node.js are not needed. The program is not code-signed yet, so Windows SmartScreen may say
+“Windows protected your PC”: choose **More info → Run anyway**. Word → PDF conversion needs LibreOffice or
+Microsoft Word installed. Settings, history, saved workflows and plugins live in `%APPDATA%\OfficeFlow` and
+are kept when OfficeFlow is updated or uninstalled. If the program does not start, the reason is shown in a
+message box and saved to `%APPDATA%\OfficeFlow\logs\startup-error.log`.
+
+### Making a release
+
+1. Set the same version in `officeflow/__init__.py`, `pyproject.toml` and `frontend/package.json`.
+2. Push a matching tag, e.g. `git tag v0.3.2` then `git push origin v0.3.2`.
+
+The **Windows release** GitHub Actions workflow then builds the interface, packages it with PyInstaller
+(`packaging/officeflow.spec`), checks that `OfficeFlow.exe` starts and loads every tool and the desktop window
+components, builds the installer with Inno Setup (`packaging/installer.iss`) and publishes both files as a
+GitHub Release. Running the workflow manually ("Run workflow") builds the files without publishing them.
+The same workflow runs the test suite on Windows.
+
 ## Quick start
 
 Build the interface once (needs Node.js 20+), then start the app:

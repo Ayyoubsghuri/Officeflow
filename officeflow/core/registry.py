@@ -72,8 +72,11 @@ def by_category(category: str) -> list[Operation]:
 def load_builtin() -> None:
     import officeflow.operations as package
 
-    for module in pkgutil.iter_modules(package.__path__):
-        importlib.import_module(f"{package.__name__}.{module.name}")
+    names = {module.name for module in pkgutil.iter_modules(package.__path__)}
+    # A packaged application may not be able to list its modules: fall back to the known ones.
+    names |= {"excel", "pdf", "word"}
+    for name in sorted(names):
+        importlib.import_module(f"{package.__name__}.{name}")
     _builtin_ids.update(op.id for op in _operations.values() if not any(op.id in v for v in _plugin_tools.values()))
 
 

@@ -1,0 +1,119 @@
+name: Windows release
+
+# Push a tag such as v0.3.2 to build OfficeFlow for Windows and publish a GitHub Release
+# with the installer and a portable zip. "Run workflow" (manual) builds without releasing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = python -c "import officeflow; print(officeflow.__version__)"
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "v$version") {
+            throw "Tag ${{ github.ref_name }} does not match officeflow.__version__ ($version)."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build the interface
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build OfficeFlow.exe
+        run: pyinstaller packaging/officeflow.spec --noconfirm
+
+      - name: Check the desktop window components
+        shell: pwsh
+        run: |
+          $check = Start-Process -FilePath "dist\OfficeFlow\OfficeFlow.exe" -ArgumentList "--self-check" -PassThru -Wait
+          if ($check.ExitCode -ne 0) { throw "OfficeFlow.exe --self-check failed (exit code $($check.ExitCode))." }
+
+      - name: Smoke test the built application
+        shell: pwsh
+        run: |
+          $env:OFFICEFLOW_HOME = "$env:RUNNER_TEMP\officeflow-home"
+          $app = Start-Process -FilePath "dist\OfficeFlow\OfficeFlow.exe" -ArgumentList "--serve","--port","8765","--token","ci" -PassThru
+          $headers = @{ "X-OfficeFlow-Token" = "ci" }
+          $meta = $null
+          foreach ($i in 1..60) {
+            try { $meta = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/meta" -Headers $headers; break } catch { Start-Sleep -Seconds 1 }
+          }
+          Stop-Process -Id $app.Id -Force
+          if (-not $meta) { throw "OfficeFlow.exe did not start." }
+          if ($meta.operations.Count -lt 26) { throw "Only $($meta.operations.Count) tools were loaded." }
+          Write-Host "OfficeFlow $($meta.version) started with $($meta.operations.Count) tools."
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.version.outputs.version }} packaging\installer.iss
+
+      - name: Build the portable zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\OfficeFlow -DestinationPath dist\OfficeFlow-${{ steps.version.outputs.version }}-portable.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfficeFlow-${{ steps.version.outputs.version }}-windows
+          path: |
+            dist/OfficeFlow-Setup-*.exe
+            dist/OfficeFlow-*-portable.zip
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OfficeFlow ${{ steps.version.outputs.version }}
+          files: |
+            dist/OfficeFlow-Setup-*.exe
+            dist/OfficeFlow-*-portable.zip
+          body: |
+            **Install:** download `OfficeFlow-Setup-${{ steps.version.outputs.version }}.exe` and run it (no administrator rights needed).
+            **Portable:** unzip `OfficeFlow-${{ steps.version.outputs.version }}-portable.zip` anywhere and run `OfficeFlow\OfficeFlow.exe`.
+
+            Windows may show "Windows protected your PC" because the program is not code-signed: choose **More info → Run anyway**.
+            Converting Word to PDF needs LibreOffice or Microsoft Word installed. Your settings, history, workflows and plugins are kept in `%APPDATA%\OfficeFlow`.
+
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run the tests on Windows
+        run: python -m pytest -q
