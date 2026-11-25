@@ -1,82 +1,91 @@
 "use client";
 
-import { motion } from "framer-motion";
+// Home: the workflow library as folders. Folders open in place; a workflow folder
+// is selected with one click (its details show in the deck below) and opened with
+// a double click, Enter, or the Open button.
+
+import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import Deck, { toolSubject, type DeckSubject } from "@/components/Deck";
-import FolderFan, { type FanItem } from "@/components/FolderFan";
+import Deck, { type DeckSubject } from "@/components/Deck";
+import FolderGlyph from "@/components/FolderGlyph";
 import Icon from "@/components/Icon";
 import { api, type Library, type LibraryEntry, type Run } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
 import { openPath } from "@/lib/desktop";
 import { formats } from "@/lib/formats";
-import { allEntries, kindLabel, matches, openHref, successRate } from "@/lib/library";
+import {
+  AI, RAN, allEntries, childFolders, flowFormats, folderTree, inFolder, kindLabel, matches, openHref, successRate, underFolder,
+} from "@/lib/library";
 
-type Mode = "workflows" | "tools";
+type Tile =
+  | { type: "folder"; key: string; folder: string; name: string; count: number; tone: "grey" | "blue" }
+  | { type: "flow"; key: string; entry: LibraryEntry };
 
-export default function Dashboard() {
-  const { meta, stats, toast, refreshStats, op } = useApp();
+function tone(entry: LibraryEntry): "grey" | "green" | "amber" | "blue" {
+  if (entry.kind === "ai") return "blue";
+  if (entry.last_status === "failed") return "amber";
+  return entry.runs ? "green" : "grey";
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+export default function Home() {
+  const { meta, toast, refreshStats, op } = useApp();
   const router = useRouter();
-  const [mode, setMode] = useState<Mode | null>(null);
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [selected, setSelected] = useState("");
-  const [runs, setRuns] = useState<Run[]>([]);
   const [library, setLibrary] = useState<Library | null>(null);
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [folder, setFolder] = useState("");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState("");
 
   useEffect(() => {
     refreshStats();
     api<Run[]>("GET", "/api/history?limit=6").then(setRuns).catch(() => {});
-    api<Library>("GET", "/api/library").then((lib) => {
-      setLibrary(lib);
-      setMode((m) => m ?? (allEntries(lib).length ? "workflows" : "tools"));   // workflows first once there are some
-    }).catch(() => setMode((m) => m ?? "tools"));
-  }, [refreshStats]);
+    api<Library>("GET", "/api/library").then(setLibrary).catch((e) => toast(String(e), "error"));
+  }, [refreshStats, toast]);
 
-  const workflows = useMemo(() => allEntries(library).filter((e) => matches(e, query, op)), [library, query, op]);
-  const tools = useMemo(() => (meta?.operations ?? []).filter((o) =>
-    (filter === "all" || o.category === filter) && `${o.name} ${o.description}`.toLowerCase().includes(query.trim().toLowerCase())),
-  [meta, filter, query]);
+  const entries = useMemo(() => allEntries(library), [library]);
+  const searching = query.trim().length > 0;
 
-  const items: FanItem[] = mode === "workflows"
-    ? workflows.map((e) => ({
-        id: e.key, title: e.name, icon: op(e.steps[0])?.category ?? "workflow",
-        caption: `${kindLabel(e)} · ${e.steps.length} step${e.steps.length === 1 ? "" : "s"}`, stat: successRate(e),
-      }))
-    : tools.map((o) => {
-        const stat = stats?.targets[o.id];
-        return {
-          id: o.id, title: o.name, icon: o.category,
-          caption: `${meta?.categories[o.category]} · ${stat ? stat.runs : 0} run${stat?.runs === 1 ? "" : "s"}`,
-          stat: stat ? `${Math.round((100 * stat.ok) / stat.runs)}%` : "New",
-        };
-      });
-  const current = items.find((i) => i.id === selected) ?? items[Math.min(Math.floor(items.length / 2), items.length - 1)];
+  const tiles: Tile[] = useMemo(() => {
+    if (!library) return [];
+    if (searching) return entries.filter((e) => matches(e, query, op)).map((entry) => ({ type: "flow", key: entry.key, entry }));
+    const out: Tile[] = [];
+    if (folder !== RAN && folder !== AI) {
+      for (const f of childFolders(folderTree(library.folders), folder)) {
+        out.push({ type: "folder", key: `dir:${f}`, folder: f, name: f.split("/").pop()!, tone: "grey",
+          count: entries.filter((e) => underFolder(e, f)).length });
+      }
+    }
+    if (!folder) {
+      if (library.ai.length) out.push({ type: "folder", key: "dir:ai", folder: AI, name: "AI proposals", count: library.ai.length, tone: "blue" });
+      if (library.recent.length) out.push({ type: "folder", key: "dir:ran", folder: RAN, name: "Ran, not saved", count: library.recent.length, tone: "grey" });
+      for (const entry of library.saved.filter((e) => !e.folder)) out.push({ type: "flow", key: entry.key, entry });
+    } else {
+      for (const entry of entries.filter((e) => inFolder(e, folder))) out.push({ type: "flow", key: entry.key, entry });
+    }
+    return out;
+  }, [library, entries, folder, query, searching, op]);
 
-  const entryOf = (id: string): LibraryEntry | undefined => workflows.find((e) => e.key === id);
+  const flows = tiles.flatMap((t) => (t.type === "flow" ? [t.entry] : []));
+  const current = flows.find((e) => e.key === selected) ?? flows[0];
+
   const subject: DeckSubject | undefined = (() => {
     if (!current) return undefined;
-    if (mode === "tools") {
-      const tool = op(current.id);
-      return tool ? toolSubject(tool, stats?.targets[tool.id]) : undefined;
-    }
-    const entry = entryOf(current.id);
-    if (!entry) return undefined;
-    const first = op(entry.steps[0]);
-    const last = op(entry.steps[entry.steps.length - 1]);
+    const first = op(current.steps[0]);
+    const last = op(current.steps[current.steps.length - 1]);
     return {
-      key: entry.key, title: entry.name, icon: "workflow",
+      key: current.key, title: current.name, icon: "workflow",
       reads: first ? formats(first.input_extensions) : "Files", writes: last ? formats(last.output_extensions) : "Files",
-      detail: entry.steps.map((id) => op(id)?.name ?? id).join(" → "),
-      summary: entry.last_summary || `${kindLabel(entry)} — open it, choose the input files and run it.`,
-      runs: entry.runs, ok: entry.ok, lastRun: entry.last_run, lastStatus: entry.last_status, openLabel: "Open workflow",
+      detail: current.steps.map((id) => op(id)?.name ?? id).join(" → "),
+      summary: current.last_summary || `${kindLabel(current)} — open it, choose the input files and run it.`,
+      runs: current.runs, ok: current.ok, lastRun: current.last_run, lastStatus: current.last_status, openLabel: "Open workflow",
     };
   })();
-  const open = (id: string) => {
-    if (mode === "tools") return router.push(`/tool/?id=${id}`);
-    const entry = entryOf(id);
-    if (entry) router.push(openHref(entry));
-  };
+
+  const open = (entry: LibraryEntry) => router.push(openHref(entry));
+  const enter = (f: string) => { setFolder(f); setSelected(""); setQuery(""); };
 
   const exportHistory = async () => {
     try {
@@ -88,58 +97,93 @@ export default function Dashboard() {
     }
   };
 
-  if (!meta || !mode) return null;
+  const crumbs = folder === RAN ? ["Ran, not saved"] : folder === AI ? ["AI proposals"] : folder ? folder.split("/") : [];
+  const title = searching ? `Results for “${query}”` : crumbs.length ? crumbs[crumbs.length - 1] : "Your workflows";
+
+  if (!meta || !library) return null;
   return (
     <div className="col" style={{ gap: 4 }}>
-      <div className="toolbar-row">
-        <div className="segmented">
-          {(["workflows", "tools"] as Mode[]).map((m) => (
-            <button key={m} className={mode === m ? "on" : ""} onClick={() => { setMode(m); setSelected(""); }}>
-              <Icon name={m === "workflows" ? "folder" : "excel"} size={17} />
-              {m === "workflows" ? `Workflows (${allEntries(library).length})` : `Tools (${meta.operations.length})`}
-              {mode === m && <motion.span layoutId="dash-mode" className="seg-bg" />}
-            </button>
+      <div className="home-head">
+        <div className="home-crumbs">
+          <button className={!folder && !searching ? "on" : ""} onClick={() => enter("")}><Icon name="home" size={16} />Workflows</button>
+          {!searching && crumbs.map((c, i) => (
+            <span key={i} className="row" style={{ gap: 6 }}>
+              <Icon name="forward" size={14} />
+              <button className={i === crumbs.length - 1 ? "on" : ""}
+                onClick={() => folder !== RAN && folder !== AI && enter(crumbs.slice(0, i + 1).join("/"))}>{c}</button>
+            </span>
           ))}
         </div>
+        <div className="grow" />
         <div className="lib-search" style={{ width: 280 }}>
           <Icon name="search" size={17} />
-          <input className="input" style={{ borderRadius: 20, height: 40 }} value={query} onChange={(e) => { setQuery(e.target.value); setSelected(""); }}
-            placeholder={mode === "workflows" ? "Search workflows by name, folder or tool…" : "Search tools…"} />
+          <input className="input" style={{ borderRadius: 20, height: 38 }} value={query}
+            onChange={(e) => { setQuery(e.target.value); setSelected(""); }} placeholder="Search workflows by name, folder or tool…" />
         </div>
-        {mode === "tools" && (
-          <label className="chip" style={{ position: "relative" }}>
-            <Icon name="folder" size={18} />
-            <select value={filter} onChange={(e) => setFilter(e.target.value)} className="chip-select">
-              <option value="all">All tools</option>
-              {Object.entries(meta.categories).filter(([k]) => k !== "cross").map(([k, v]) => <option key={k} value={k}>{v} only</option>)}
-            </select>
-            <Icon name="down" size={16} />
-          </label>
-        )}
-        <div className="grow" />
-        <button className="chip" onClick={() => router.push("/workflows/")}><Icon name="folder" size={18} />All workflows</button>
-        <button className="chip" onClick={exportHistory}><Icon name="export" size={18} />Export</button>
-        <button className="chip" onClick={() => router.push("/workflow/")}><Icon name="plus" size={18} />New workflow</button>
+        <button className="btn icon ghost" title="Manage folders" onClick={() => router.push(folder && folder !== RAN && folder !== AI ? `/workflows/?folder=${encodeURIComponent(folder)}` : "/workflows/")}>
+          <Icon name="folder" size={18} />
+        </button>
+        <button className="btn icon ghost" title="Export history" onClick={exportHistory}><Icon name="export" size={18} /></button>
+        <button className="btn icon ghost" title="Ask the AI to build a workflow" onClick={() => router.push("/assistant/?mode=workflow")}><Icon name="sparkle" size={17} /></button>
+        <button className="btn icon ghost" title="New workflow" onClick={() => router.push("/workflow/")}><Icon name="plus" size={18} /></button>
       </div>
-      {items.length ? (
-        <FolderFan key={mode} items={items} selected={current?.id ?? ""} onSelect={setSelected} onOpen={open} />
-      ) : (
-        <div className="fan empty-fan">
-          <div className="lib-empty">
-            <Icon name="folder" size={36} />
-            <div>{query ? `Nothing matches “${query}”.` : "No workflow yet. Build one, or describe it to the AI assistant — it will appear here as a folder."}</div>
+
+      <div className="home-title">
+        <h1 className="h1">{title}</h1>
+        <span className="muted">{searching ? plural(tiles.length, "workflow") : folder === RAN || folder === AI ? plural(flows.length, "workflow")
+          : folder ? plural(entries.filter((e) => underFolder(e, folder)).length, "workflow") : `${plural(entries.length, "workflow")} in total`}</span>
+      </div>
+
+      <div className="home-folders">
+        {tiles.length === 0 ? (
+          <div className="lib-empty" style={{ gridColumn: "1 / -1" }}>
+            <FolderGlyph size="lg" label="OfficeFlow" />
+            <div>{searching ? `Nothing matches “${query}”.` : entries.length ? "This folder is empty."
+              : "No workflow yet. Build one, or describe it to the AI assistant — it will appear here as a folder."}</div>
             <div className="row">
               <button className="btn primary" onClick={() => router.push("/workflow/")}><Icon name="plus" size={16} />Build a workflow</button>
               <button className="btn pink" onClick={() => router.push("/assistant/?mode=workflow")}><Icon name="sparkle" size={16} />Ask AI</button>
             </div>
           </div>
-        </div>
-      )}
-      <Deck subject={subject} runs={runs} workflows={(library?.saved ?? []).map((e) => ({ name: e.name, steps: e.steps }))}
-        onOpen={() => current && open(current.id)}
+        ) : (
+          <AnimatePresence mode="popLayout">
+            {tiles.map((t, i) => {
+              const isFlow = t.type === "flow";
+              const on = isFlow && current?.key === t.key;
+              return (
+                <motion.div key={`${folder}|${t.key}`} className={`home-tile ${isFlow ? "flow" : "dir"} ${on ? "on" : ""}`}
+                  role="button" tabIndex={0} title={isFlow ? t.entry.last_summary || t.entry.name : `Open the folder ${t.name}`}
+                  initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  transition={{ delay: Math.min(i, 14) * 0.025 }}
+                  onClick={() => (isFlow ? setSelected(t.key) : enter(t.folder))}
+                  onDoubleClick={() => isFlow && open(t.entry)}
+                  onKeyDown={(e) => e.key === "Enter" && (isFlow ? open(t.entry) : enter(t.folder))}>
+                  <div className="home-tile-box">
+                    {isFlow
+                      ? <FolderGlyph label={plural(t.entry.steps.length, "step")} tone={tone(t.entry)} />
+                      : <FolderGlyph label="OfficeFlow" tone={t.tone} />}
+                    {on && (
+                      <button className="home-open" onClick={(e) => { e.stopPropagation(); open(t.entry); }}>
+                        Open<Icon name="forward" size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="home-tile-name ellipsis">{isFlow ? t.entry.name : t.name}</div>
+                  <div className="home-tile-sub ellipsis">
+                    {isFlow ? `${flowFormats(t.entry, op) || kindLabel(t.entry)} · ${successRate(t.entry)}` : plural(t.count, "workflow")}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        )}
+      </div>
+
+      <Deck subject={subject} runs={runs} workflows={library.saved.map((e) => ({ name: e.name, steps: e.steps }))}
+        onOpen={() => current && open(current)}
         onOpenRun={(run) => run.kind === "operation" ? router.push(`/tool/?id=${run.target_id}`) : router.push(`/workflow/?name=${encodeURIComponent(run.target_id)}`)}
         onOpenWorkflow={(name) => router.push(name ? `/workflow/?name=${encodeURIComponent(name)}` : "/workflow/")}
-        onNewRun={() => router.push(mode === "tools" && current ? `/tool/?id=${current.id}` : "/workflow/")} />
+        onNewRun={() => router.push("/workflow/")} />
     </div>
   );
 }

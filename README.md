@@ -120,9 +120,9 @@ relying on them.
 
 ## Interface
 
-- **Dashboard:** the 3D stack of glass folders (one per tool) from the design reference. Hover to pick a
-  tool, click to open it; ← / → or the round handle also move the selection. Below it, the deck shows
-  recent activity, saved workflows and the selected tool as a green folder (formats, last run, success rate).
+- **Home:** your workflows as glass folders. Click a folder to go into it (the path at the top takes you
+  back), click a workflow to select it and see it in the deck below (formats, last run, success rate), and
+  double-click it, press Enter or use **Open** to open it ready to run. Tools live in their toolboxes, not here.
 - **Custom title bar:** the window has no Windows header. The app's top bar is the title bar: drag it to
   move the window, double-click to maximise, use its own minimise/maximise/close buttons, and resize from
   the window edges.
@@ -137,8 +137,8 @@ Every workflow you can reuse is a folder: workflows you saved, workflows you ran
 proposed by the AI assistant. The **Workflows** page has a folder tree with search (by name, folder or any
 tool the workflow uses), folder cards, and a *Recently run* table; click a workflow to open it ready to run.
 Put a workflow in a folder with the **Folder** field next to its name in the builder (use `/` for
-sub-folders, e.g. `Invoices/2024`), move it from its card, or rename a whole folder. On the dashboard the 3D
-folder stack shows your workflows (switch to **Tools** for the tools), with the same search.
+sub-folders, e.g. `Invoices/2024`), move it from its card, or rename a whole folder. The home page shows the
+same folders and workflows, with the same search.
 
 ### Workflow Builder
 A node canvas in the style of the second design reference. A **Files & folders** start node feeds the
