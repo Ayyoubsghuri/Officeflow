@@ -22,7 +22,8 @@ message box and saved to `%APPDATA%\OfficeFlow\logs\startup-error.log`.
 ### Making a release
 
 1. Set the same version in `officeflow/__init__.py`, `pyproject.toml` and `frontend/package.json`.
-2. Push a matching tag, e.g. `git tag v0.3.2` then `git push origin v0.3.2`.
+2. Either push a matching tag (`git tag v0.3.2`, then `git push origin v0.3.2`), or on GitHub open
+   **Actions → Windows release → Run workflow**, tick **publish** and run it (the tag is created for you).
 
 The **Windows release** GitHub Actions workflow then builds the interface, packages it with PyInstaller
 (`packaging/officeflow.spec`), checks that `OfficeFlow.exe` starts and loads every tool and the desktop window

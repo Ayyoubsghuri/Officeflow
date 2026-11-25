@@ -1,11 +1,18 @@
 name: Windows release
 
-# Push a tag such as v0.3.2 to build OfficeFlow for Windows and publish a GitHub Release
-# with the installer and a portable zip. "Run workflow" (manual) builds without releasing.
+# Builds OfficeFlow for Windows: an installer and a portable zip.
+# - Push a tag such as v0.3.2, or
+# - "Run workflow" with "publish" ticked (creates the tag v<version> itself)
+# to publish them as a GitHub Release. A manual run without "publish" only builds them.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a GitHub Release (tag v<version from officeflow/__init__.py>)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -90,9 +97,11 @@ jobs:
             dist/OfficeFlow-*-portable.zip
 
       - name: Publish the release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.publish
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
           name: OfficeFlow ${{ steps.version.outputs.version }}
           files: |
             dist/OfficeFlow-Setup-*.exe
