@@ -185,6 +185,9 @@ things only:
   installed, **Rebuild the workflow with the new tool** sends your original request again (after review) or
   **Open the previous draft** opens the first proposal. Every answer is kept locally in **Activity**, so an
   earlier workflow or tool can always be reopened.
+- **Leave while it works.** After sending, you can go to any other page: the AI keeps working, a dot on
+  **AI Assistant** in the menu pulses meanwhile, and a message says when it is done. Back on the page, the
+  answer is waiting (and it stays there after you close and reopen OfficeFlow).
 - **Create a tool (plugin)** from a description. The code is checked statically before you see it: only
   an allow-list of offline libraries (no networking, no launching programs, no `eval`/`exec`, no dynamic
   imports), a valid tool definition, no replacing built-in tools. You read the code, tick “I have read this

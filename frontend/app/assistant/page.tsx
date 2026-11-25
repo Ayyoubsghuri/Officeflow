@@ -7,9 +7,8 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import Icon from "@/components/Icon";
 import { Check } from "@/components/ParamForm";
 import { api, type AiActivity, type AiAnswer, type AiPreview, type AiStatus, type Operation } from "@/lib/api";
-import { useApp } from "@/lib/app-context";
+import { AI_LAST_KEY, readStored, useApp, writeStored } from "@/lib/app-context";
 import { formats } from "@/lib/formats";
-import { useJob } from "@/lib/useJob";
 
 type Mode = "workflow" | "plugin";
 
@@ -154,26 +153,11 @@ interface Pending {
   answer: AiAnswer;
 }
 
-function load<T>(key: string): T | null {
-  try {
-    const raw = sessionStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-function store(key: string, value: unknown) {
-  try {
-    if (value === null) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* storage unavailable: the Activity list still keeps every answer */
-  }
-}
+const load = readStored;
+const store = writeStored;
 
 function Assistant() {
-  const { op, refreshMeta, saveSettings, settings, toast } = useApp();
+  const { op, refreshMeta, saveSettings, settings, toast, aiJob, startAiJob, markAiSeen } = useApp();
   const router = useRouter();
   const params = useSearchParams();
   const [status, setStatus] = useState<AiStatus | null>(null);
@@ -185,29 +169,38 @@ function Assistant() {
   const [shown, setShown] = useState<AiAnswer | null>(null);       // answer on screen
   const [pending, setPending] = useState<Pending | null>(null);    // workflow waiting for a new tool
   const [sentRequest, setSentRequest] = useState("");
-  const { job, error, start } = useJob();
+  const [error, setError] = useState("");
+  const job = aiJob?.state ?? null;
 
   const loadActivity = useCallback(() => api<AiActivity[]>("GET", "/api/ai/activity").then(setActivity).catch(() => {}), []);
   useEffect(() => {
     api<AiStatus>("GET", "/api/ai/status").then(setStatus).catch(() => {});
     loadActivity();
     // Coming back to this page keeps the last answer and any workflow waiting for a tool.
-    const last = load<{ answer: AiAnswer; request: string }>("officeflow-ai-last");
+    const last = load<{ answer: AiAnswer; request: string }>(AI_LAST_KEY);
     if (last && !params.get("q")) { setShown(last.answer); setSentRequest(last.request); }
+    // ...and a request still being worked on, started before you left.
+    if (aiJob?.state?.state === "running") { setMode(aiJob.mode); setSentRequest(aiJob.request); }
     setPending(load<Pending>("officeflow-ai-pending"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadActivity]);
 
+  // An answer that arrived (here or while you were on another page) is shown once and kept.
   useEffect(() => {
-    if (!job || job.state === "running") return;
+    if (!aiJob?.state || aiJob.state.state === "running" || aiJob.seen) return;
     loadActivity();
-    if (job.state === "done" && job.result) {
-      const answer = job.result as unknown as AiAnswer;
-      setShown(answer);
-      store("officeflow-ai-last", { answer, request: sentRequest });
+    setMode(aiJob.mode);
+    setSentRequest(aiJob.request);
+    if (aiJob.state.state === "done" && aiJob.state.result) {
+      setShown(aiJob.state.result as unknown as AiAnswer);
+      setInstalled([]);
+      setError("");
+    } else {
+      setError(aiJob.state.error || "The AI could not complete this request.");
     }
+    markAiSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job?.state]);
+  }, [aiJob?.id, aiJob?.state?.state, aiJob?.seen]);
 
   const review = async (m: Mode = mode, text: string = request) => {
     if (!text.trim()) return toast("Describe what you want first.", "error");
@@ -217,7 +210,12 @@ function Assistant() {
     setInstalled([]);
     setShown(null);
     setSentRequest(request);
-    start({ kind: mode, request }, mode === "workflow" ? "AI · designing a workflow" : "AI · writing a tool", "/api/ai/jobs");
+    setError("");
+    startAiJob(mode, request).catch((e) => {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      toast(message, "error");
+    });
     setPreview(null);
   };
   const openDraft = (workflow: AiAnswer["workflow"]) => {
@@ -312,10 +310,16 @@ function Assistant() {
             </AnimatePresence>
           </div>
 
-          {(running || shown || error || job?.state === "error") && (
+          {(running || shown || error) && (
             <div className="card pad">
-              {running && <div className="row"><span className="spin dark" /><span>{mode === "workflow" ? "Designing your workflow…" : "Writing your tool and checking it…"} {job?.elapsed ? `${Math.round(job.elapsed)} s` : ""}</span></div>}
-              {!running && (error || job?.state === "error") && <div className="banner failed"><b>Could not complete</b><div>{error || job?.error}</div></div>}
+              {running && (
+                <div className="col" style={{ gap: 8 }}>
+                  <div className="row"><span className="spin dark" /><span>{aiJob?.mode === "plugin" ? "Writing your tool and checking it…" : "Designing your workflow…"} {job?.elapsed ? `${Math.round(job.elapsed)} s` : ""}</span></div>
+                  <div className="muted" style={{ fontSize: 13 }}>You can go to other pages meanwhile — the answer will be waiting here, and you will get a message when it is ready.</div>
+                  {aiJob?.request && <pre className="selectable ai-request">{aiJob.request}</pre>}
+                </div>
+              )}
+              {!running && error && <div className="banner failed"><b>Could not complete</b><div>{error}</div></div>}
               {!running && shown?.kind === "workflow" && (
                 <WorkflowResult answer={shown} ops={op} onOpen={() => openDraft(shown.workflow)}
                   onCreateTool={(text) => createMissingTool(text, shown)} />

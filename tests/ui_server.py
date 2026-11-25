@@ -4,6 +4,7 @@ Usage: python tests/ui_server.py <work-folder> <port> <token>
 """
 
 import os
+import time
 import sys
 from pathlib import Path
 
@@ -39,6 +40,10 @@ if os.environ.get("OFFICEFLOW_FAKE_AI"):
             ai.PluginAnswer(file_name="count_pages.py", explanation="Counts the pages of each PDF.", code=GOOD_PLUGIN))
 
         class Picker(ai.Assistant):
+            def design_workflow(self, request):
+                time.sleep(1.5)              # long enough to leave the page while it works
+                return super().design_workflow(request)
+
             def create_plugin(self, request):
                 fake.answers.pop(0)          # skip the workflow answer
                 return super().create_plugin(request)

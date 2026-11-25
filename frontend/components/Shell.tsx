@@ -39,7 +39,9 @@ function useCategory(): string {
 function Rail() {
   const pathname = usePathname();
   const category = useCategory();
-  const { railCollapsed } = useApp();
+  const { railCollapsed, aiJob } = useApp();
+  const aiBusy = aiJob?.state?.state === "running";
+  const aiNew = !!aiJob?.state && !aiBusy && !aiJob.seen;
   const isActive = (item: { href: string; match?: string }) => {
     if (item.match) return category === item.match;
     if (item.href === "/") return pathname === "/";
@@ -49,6 +51,9 @@ function Rail() {
     <Link key={item.href} href={item.href} className={`nav ${isActive(item) ? "active" : ""}`} title={item.label}>
       {isActive(item) && <motion.span layoutId="nav-bg" className="bg" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
       <Icon name={item.icon} />
+      {item.href === "/assistant/" && (aiBusy || aiNew) && (
+        <span className={`nav-dot ${aiBusy ? "busy" : ""}`} title={aiBusy ? "The AI is working" : "New answer from the AI"} />
+      )}
       {!railCollapsed && <span>{item.label}</span>}
     </Link>
   );

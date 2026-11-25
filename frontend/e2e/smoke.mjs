@@ -134,8 +134,16 @@ try {
   await page.waitForTimeout(300);
   await shot(page, "ai-review");
   await page.click(".sendbox button.primary");
+  // Leave while the AI works: it keeps going, says when it is done, and the answer waits on the page.
+  await page.waitForSelector("text=You can go to other pages meanwhile");
+  await page.click(".rail a[href='/workflows/']");
+  await page.waitForSelector(".nav-dot.busy");
+  await page.waitForSelector(".toast:has-text('The AI assistant has finished')", { timeout: 20000 });
+  check(!!(await page.$(".nav-dot:not(.busy)")), "AI keeps working on another page and says when it is done");
+  await page.click(".rail a[href='/assistant/']");
   await page.waitForSelector("text=Open in Workflow Builder", { timeout: 20000 });
   check((await page.$$(".ai-step")).length === 2, "AI proposes a two-step workflow");
+  check(!(await page.$(".nav-dot")), "the answer is marked as seen");
   await page.waitForTimeout(400);
   await shot(page, "ai-workflow");
   await page.click("text=Open in Workflow Builder");

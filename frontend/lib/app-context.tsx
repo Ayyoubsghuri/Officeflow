@@ -1,7 +1,38 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { api, reportError, type JobState, type Meta, type Operation, type Settings, type Stats } from "./api";
+import { api, reportError, watchJob, type JobState, type Meta, type Operation, type Settings, type Stats } from "./api";
+
+/** The AI assistant's latest request. It lives here, not on the Assistant page, so it keeps
+ *  running when you go to another page and its answer is waiting when you come back. */
+export interface AiJob {
+  id: string;
+  mode: "workflow" | "plugin";
+  request: string;
+  state: JobState | null;
+  seen: boolean;             // the answer (or error) has been shown on the Assistant page
+}
+
+const AI_JOB_KEY = "officeflow-ai-job";
+export const AI_LAST_KEY = "officeflow-ai-last";
+
+export function readStored<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeStored(key: string, value: unknown) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable: the Activity list still keeps every answer */
+  }
+}
 
 export interface ActiveJob {
   id: string;
@@ -23,6 +54,9 @@ interface AppValue {
   trackJob(job: ActiveJob): void;
   railCollapsed: boolean;
   setRailCollapsed(value: boolean): void;
+  aiJob: AiJob | null;
+  startAiJob(mode: AiJob["mode"], request: string): Promise<void>;
+  markAiSeen(): void;
 }
 
 const AppContext = createContext<AppValue | null>(null);
@@ -118,10 +152,70 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (job.state && job.state.state !== "running") refreshStats();
   }, [refreshStats]);
 
+  // ---- AI assistant job: survives page changes (and app restarts, through local storage) ----
+  const [aiJob, setAiJobState] = useState<AiJob | null>(null);
+  const aiStop = useRef<() => void>(undefined);
+  const setAiJob = useCallback((update: (job: AiJob | null) => AiJob | null) => {
+    setAiJobState((current) => {
+      const next = update(current);
+      writeStored(AI_JOB_KEY, next);
+      return next;
+    });
+  }, []);
+
+  const followAiJob = useCallback((id: string, mode: AiJob["mode"], request: string) => {
+    const label = aiLabel(mode);
+    aiStop.current?.();
+    const onUpdate = (state: JobState) => {
+      trackJob({ id, label, state });
+      setAiJob((job) => (job && job.id === id ? { ...job, state } : job));
+      if (state.state === "running") return;
+      const onAssistant = window.location.pathname.startsWith("/assistant");
+      if (state.state === "done" && state.result) {
+        writeStored(AI_LAST_KEY, { answer: state.result, request });
+      }
+      if (!onAssistant) {
+        toast(state.state === "done" ? "The AI assistant has finished — open AI Assistant to see what it made."
+          : "The AI assistant could not finish — open AI Assistant to see why.", state.state === "done" ? "info" : "error");
+      }
+    };
+    // A job the server no longer knows (OfficeFlow was closed while it worked) ends with a clear message.
+    api<JobState>("GET", `/api/jobs/${id}`).then((state) => {
+      onUpdate(state);
+      if (state.state === "running") aiStop.current = watchJob(id, onUpdate);
+    }).catch(() => {
+      setAiJob((job) => job && job.id === id ? { ...job, state: {
+        id, kind: "ai", state: "error", progress: { done: 0, total: 0, message: "" }, steps: {}, result: null, output_dir: "", elapsed: 0,
+        error: "OfficeFlow was closed before the AI finished. Send the request again — anything it did finish is listed under Activity.",
+      } } : job);
+    });
+  }, [setAiJob, toast, trackJob]);
+
+  useEffect(() => {
+    const stored = readStored<AiJob>(AI_JOB_KEY);
+    if (!stored) return;
+    setAiJobState(stored);
+    if (!stored.state || stored.state.state === "running") followAiJob(stored.id, stored.mode, stored.request);
+    return () => aiStop.current?.();
+  }, [followAiJob]);
+
+  const startAiJob = useCallback(async (mode: AiJob["mode"], request: string) => {
+    const first = await api<JobState>("POST", "/api/ai/jobs", { kind: mode, request });
+    setAiJob(() => ({ id: first.id, mode, request, state: first, seen: false }));
+    trackJob({ id: first.id, label: aiLabel(mode), state: first });
+    followAiJob(first.id, mode, request);
+  }, [followAiJob, setAiJob, trackJob]);
+
+  const markAiSeen = useCallback(() => {
+    setAiJob((job) => (job && !job.seen && job.state && job.state.state !== "running" ? { ...job, seen: true } : job));
+  }, [setAiJob]);
+
   const value = useMemo<AppValue>(() => ({
     meta, settings, stats, error, op: (id) => meta?.operations.find((o) => o.id === id),
     saveSettings, refreshStats, refreshMeta, toast, activeJobs, trackJob, railCollapsed, setRailCollapsed,
-  }), [meta, settings, stats, error, saveSettings, refreshStats, refreshMeta, toast, activeJobs, trackJob, railCollapsed]);
+    aiJob, startAiJob, markAiSeen,
+  }), [meta, settings, stats, error, saveSettings, refreshStats, refreshMeta, toast, activeJobs, trackJob, railCollapsed,
+    aiJob, startAiJob, markAiSeen]);
 
   return (
     <AppContext.Provider value={value}>
@@ -129,4 +223,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       {toastState && <div className={`toast ${toastState.kind === "error" ? "error" : ""}`}>{toastState.message}</div>}
     </AppContext.Provider>
   );
+}
+
+function aiLabel(mode: AiJob["mode"]): string {
+  return mode === "workflow" ? "AI · designing a workflow" : "AI · writing a tool";
 }
