@@ -46,5 +46,5 @@ if os.environ.get("OFFICEFLOW_FAKE_AI"):
         return Picker(key or "fake", model, client=fake, provider=provider)
 
     app.state.assistant_factory = factory
-    app.state.openai_models = lambda key: ai.list_openai_models(key, client=FakeClient())
+    app.state.list_models = lambda provider, key: ai.list_provider_models(provider, key, client=FakeClient())
 uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

@@ -58,6 +58,8 @@ class SettingsBody(BaseModel):
     ai_redact: bool | None = None
     ai_provider: str | None = None
     ai_openai_model: str | None = None
+    ai_openrouter_model: str | None = None
+    ai_nvidia_model: str | None = None
 
 
 class KeyBody(BaseModel):
@@ -210,7 +212,8 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         return {"theme": s.theme, "output_dir": str(s.resolved_output_dir()),
                 "include_subfolders": s.include_subfolders, "last_input_dir": s.last_input_dir,
                 "ai_model": s.ai_model, "ai_redact": s.ai_redact, "ai_provider": s.ai_provider,
-                "ai_openai_model": s.ai_openai_model}
+                "ai_openai_model": s.ai_openai_model, "ai_openrouter_model": s.ai_openrouter_model,
+                "ai_nvidia_model": s.ai_nvidia_model}
 
     @app.put("/api/settings", dependencies=[api])
     def put_settings(body: SettingsBody) -> dict[str, Any]:
@@ -220,10 +223,10 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
                 raise OperationError(f"Unknown model {value!r}.")
             if key == "ai_provider" and value not in ai.PROVIDERS:
                 raise OperationError(f"Unknown AI provider {value!r}.")
-            if key == "ai_openai_model":
+            if key in ("ai_openai_model", "ai_openrouter_model", "ai_nvidia_model"):
                 value = value.strip()
-                if not value or len(value) > 100 or any(c.isspace() for c in value):
-                    raise OperationError("Enter an OpenAI model name, for example gpt-5.")
+                if not value or len(value) > 120 or any(c.isspace() for c in value):
+                    raise OperationError("Enter a model name, for example gpt-5 or openai/gpt-5.")
             setattr(s, key, value)
         s.save()
         return get_settings()
@@ -441,12 +444,16 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
     # -- AI assistant ----------------------------------------------------------------
     app.state.assistant_factory = lambda provider, key, model: ai.Assistant(key, model, provider=provider)
 
+    def model_of(s: Settings, provider: str) -> str:
+        return {"anthropic": s.ai_model, "openai": s.ai_openai_model, "openrouter": s.ai_openrouter_model,
+                "nvidia": s.ai_nvidia_model}.get(provider, "")
+
     def active_model(s: Settings) -> str:
-        return s.ai_openai_model if s.ai_provider == "openai" else s.ai_model
+        return model_of(s, s.ai_provider)
 
     def sdk_ready(provider: str) -> bool:
         try:
-            __import__("openai" if provider == "openai" else "anthropic")
+            __import__("anthropic" if provider == "anthropic" else "openai")
             return True
         except ImportError:
             return False
@@ -455,7 +462,8 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
     def ai_status() -> dict[str, Any]:
         s: Settings = app.state.settings
         providers = {name: {"label": label, "configured": bool(keystore.load_api_key(name)),
-                            "key_hint": keystore.key_hint(name), "sdk": sdk_ready(name)}
+                            "key_hint": keystore.key_hint(name), "sdk": sdk_ready(name), "model": model_of(s, name),
+                            "default_model": ai.DEFAULT_MODELS[name]}
                      for name, label in ai.PROVIDERS.items()}
         current = providers[s.ai_provider]
         return {"provider": s.ai_provider, "provider_label": current["label"], "configured": current["configured"],
@@ -485,12 +493,12 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         """Models the provider offers to this key (only the model list is requested)."""
         if check_provider(provider) == "anthropic":
             return {"models": list(ai.MODELS)}
-        key = keystore.load_api_key("openai")
+        key = keystore.load_api_key(provider)
         if not key:
-            raise OperationError("Add an OpenAI API key first.")
-        return {"models": app.state.openai_models(key)}
+            raise OperationError(f"Add an {ai.PROVIDERS[provider]} API key first.")
+        return {"models": app.state.list_models(provider, key)}
 
-    app.state.openai_models = ai.list_openai_models
+    app.state.list_models = ai.list_provider_models
 
     @app.post("/api/ai/preview", dependencies=[api])
     def ai_preview(body: AiRequestBody) -> dict[str, Any]:

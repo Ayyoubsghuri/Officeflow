@@ -164,8 +164,15 @@ class AssistantError(OperationError):
     pass
 
 
-PROVIDERS = {"anthropic": "Anthropic (Claude)", "openai": "OpenAI"}
+PROVIDERS = {"anthropic": "Anthropic (Claude)", "openai": "OpenAI", "openrouter": "OpenRouter", "nvidia": "NVIDIA"}
 OPENAI_DEFAULT_MODEL = "gpt-5"
+# OpenAI-compatible services: same library, different server.
+COMPATIBLE = {
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "default_model": "openai/gpt-5"},
+    "nvidia": {"base_url": "https://integrate.api.nvidia.com/v1", "default_model": "meta/llama-3.3-70b-instruct"},
+}
+DEFAULT_MODELS = {"anthropic": DEFAULT_MODEL, "openai": OPENAI_DEFAULT_MODEL,
+                  **{name: info["default_model"] for name, info in COMPATIBLE.items()}}
 _OPENAI_REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
@@ -254,6 +261,112 @@ class OpenAIProvider:
         return {"role": "assistant", "content": parsed.model_dump_json()}, parsed, usage
 
 
+class CompatibleProvider:
+    """OpenRouter, NVIDIA and other OpenAI-compatible chat APIs.
+
+    Not every model behind these services supports strict JSON schemas, so the
+    request steps down automatically: strict JSON schema → JSON mode with the
+    schema in the instructions → plain text from which the JSON is extracted.
+    Whatever comes back is validated against the same schema.
+    """
+
+    _MODES = ("json_schema", "json_object", "text")
+
+    def __init__(self, name: str, api_key: str, model: str, client: Any = None) -> None:
+        self.name = name
+        self.model = (model or COMPATIBLE[name]["default_model"]).strip()
+        if client is None:
+            import openai
+
+            client = openai.OpenAI(api_key=api_key, base_url=COMPATIBLE[name]["base_url"], max_retries=2, timeout=300)
+        self._client = client
+        self._mode = 0
+        self._max_tokens = 16000
+
+    @staticmethod
+    def _schema_text(answer: type[BaseModel]) -> str:
+        return ("\n\nReply with ONLY one JSON object (no text before or after, no code fence) that matches this "
+                "JSON schema:\n" + json.dumps(answer.model_json_schema(), ensure_ascii=False))
+
+    @staticmethod
+    def _extract_json(text: str) -> str:
+        text = (text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+        start, end = text.find("{"), text.rfind("}")
+        return text[start:end + 1] if start >= 0 and end > start else text
+
+    def _call(self, system: str, messages: list[dict[str, Any]], answer: type[BaseModel]):
+        mode = self._MODES[self._mode]
+        payload = [{"role": "system", "content": system + ("" if mode == "json_schema" else self._schema_text(answer))},
+                   *messages]
+        if mode == "json_schema":
+            return mode, self._client.chat.completions.parse(
+                model=self.model, messages=payload, response_format=answer, max_tokens=self._max_tokens)
+        extra = {"response_format": {"type": "json_object"}} if mode == "json_object" else {}
+        return mode, self._client.chat.completions.create(
+            model=self.model, messages=payload, max_tokens=self._max_tokens, **extra)
+
+    def ask(self, system: str, messages: list[dict[str, Any]], answer: type[BaseModel], effort: str):
+        import openai
+        from pydantic import ValidationError
+
+        while True:
+            try:
+                mode, response = self._call(system, messages, answer)
+            except openai.BadRequestError as exc:
+                text = str(getattr(exc, "message", exc)).lower()
+                if "max_tokens" in text or "max tokens" in text or "maximum" in text and "token" in text:
+                    if self._max_tokens > 4096:
+                        self._max_tokens = 4096          # some models allow fewer output tokens
+                        continue
+                if self._mode < len(self._MODES) - 1:
+                    self._mode += 1                      # this model does not support that answer format
+                    continue
+                raise AssistantError(_readable_openai(exc)) from None
+            except Exception as exc:  # noqa: BLE001 - mapped to a readable message
+                log.warning("AI request failed: %s", exc)
+                raise AssistantError(_readable_openai(exc)) from None
+            choice = response.choices[0]
+            message = choice.message
+            if getattr(message, "refusal", None):
+                raise AssistantError("The AI declined this request. Rephrase it and try again.")
+            if choice.finish_reason == "length":
+                raise AssistantError("The answer was too long. Ask for a smaller tool or workflow.")
+            parsed = getattr(message, "parsed", None) if mode == "json_schema" else None
+            raw = message.content or ""
+            if parsed is None:
+                try:
+                    parsed = answer.model_validate_json(self._extract_json(raw))
+                except (ValidationError, ValueError):
+                    if self._mode < len(self._MODES) - 1 and mode == "json_schema":
+                        self._mode += 1
+                        continue
+                    raise AssistantError("The model did not return a usable answer. Try another model in "
+                                         "Settings → AI assistant.") from None
+            tokens = getattr(response, "usage", None)
+            usage = {"input_tokens": getattr(tokens, "prompt_tokens", 0) or 0,
+                     "output_tokens": getattr(tokens, "completion_tokens", 0) or 0}
+            return {"role": "assistant", "content": parsed.model_dump_json()}, parsed, usage
+
+
+def list_provider_models(provider: str, api_key: str, client: Any = None) -> list[str]:
+    """Models a provider offers to this key (only the list of model names is requested)."""
+    if provider == "openai":
+        return list_openai_models(api_key, client)
+    if client is None:
+        import openai
+
+        client = openai.OpenAI(api_key=api_key, base_url=COMPATIBLE[provider]["base_url"], max_retries=1, timeout=30)
+    try:
+        ids = [m.id for m in client.models.list()]
+    except Exception as exc:  # noqa: BLE001
+        raise AssistantError(_readable_openai(exc)) from None
+    skip = ("embed", "rerank", "clip", "guard", "safety", "reward", "parse", "tts", "whisper", "audio", "image",
+            "vision-only", "ocr", "detector", "retriever")
+    return sorted(i for i in ids if not any(k in i.lower() for k in skip))
+
+
 def list_openai_models(api_key: str, client: Any = None) -> list[str]:
     """Text models available to this key (only the model list is requested)."""
     if client is None:
@@ -307,8 +420,11 @@ class Assistant:
             raise AssistantError("Add an API key in Settings → AI assistant first.")
         if provider not in PROVIDERS:
             raise AssistantError(f"Unknown AI provider {provider!r}.")
-        backend = OpenAIProvider if provider == "openai" else AnthropicProvider
-        self._provider = backend(api_key, model, client)
+        if provider in COMPATIBLE:
+            self._provider = CompatibleProvider(provider, api_key, model, client)
+        else:
+            backend = OpenAIProvider if provider == "openai" else AnthropicProvider
+            self._provider = backend(api_key, model, client)
         self.provider = provider
         self.model = self._provider.model
 

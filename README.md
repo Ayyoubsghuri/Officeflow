@@ -159,6 +159,13 @@ Choose a provider in **Settings → AI assistant** and paste its API key:
 - **Anthropic (Claude)** — default model Claude Opus 5.5; Sonnet 5.5 and Haiku 5.5 can be chosen.
 - **OpenAI** — pick any text model available to your account (**Load my models** fetches the list of model
   names; default `gpt-5`). Requests are sent with `store=false`.
+- **OpenRouter** — one key for many models (GPT, Claude, Gemini, Llama, …); type to search the model list,
+  default `openai/gpt-5`. OpenRouter forwards the request text to the company behind the chosen model.
+- **NVIDIA** — the NVIDIA API catalog (build.nvidia.com), default `meta/llama-3.3-70b-instruct`.
+
+OpenRouter and NVIDIA use the OpenAI-compatible API. Not every model there supports strict JSON answers, so
+OfficeFlow steps down automatically (JSON schema → JSON mode → JSON taken from plain text) and validates the
+answer the same way; if a small model keeps giving unusable answers, choose a larger one.
 
 Each provider keeps its own key; switching provider does not delete the other key. The assistant does two
 things only:

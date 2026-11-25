@@ -54,6 +54,7 @@ function Privacy({ status, redact, onRedact }: { status: AiStatus | null; redact
       </div>
       <Check on={redact} onChange={onRedact} label="Hide file paths and e-mail addresses in my requests automatically" />
       {status?.provider === "openai" && <div className="help">OpenAI requests are sent with storage turned off (store=false).</div>}
+      {status?.provider === "openrouter" && <div className="help">OpenRouter passes your request text to the company behind the model you chose; that company’s data policy also applies.</div>}
       <div className="help">The AI only designs workflows and writes tools. Nothing it returns runs by itself: workflows open as drafts, and tools are installed only after you read the code and approve.</div>
     </div>
   );

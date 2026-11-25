@@ -14,39 +14,61 @@ import { nativePick } from "@/lib/pick";
 const KEY_HELP: Record<AiProvider, string> = {
   anthropic: "Create one at console.anthropic.com.",
   openai: "Create one at platform.openai.com → API keys.",
+  openrouter: "Create one at openrouter.ai → Keys. OpenRouter forwards requests to the provider of the model you choose.",
+  nvidia: "Create one at build.nvidia.com (API key in your NVIDIA account).",
 };
+const KEY_PLACEHOLDER: Record<AiProvider, string> = {
+  anthropic: "sk-ant-…", openai: "sk-…", openrouter: "sk-or-…", nvidia: "nvapi-…",
+};
+const MODEL_SETTING: Record<Exclude<AiProvider, "anthropic">, "ai_openai_model" | "ai_openrouter_model" | "ai_nvidia_model"> = {
+  openai: "ai_openai_model", openrouter: "ai_openrouter_model", nvidia: "ai_nvidia_model",
+};
+const PROVIDERS: AiProvider[] = ["anthropic", "openai", "openrouter", "nvidia"];
 
 function AiSettings() {
   const { settings, saveSettings, toast } = useApp();
   const [status, setStatus] = useState<AiStatus | null>(null);
-  const [keys, setKeys] = useState<Record<AiProvider, string>>({ anthropic: "", openai: "" });
-  const [openaiModels, setOpenaiModels] = useState<string[]>([]);
+  const [keys, setKeys] = useState<Record<AiProvider, string>>({ anthropic: "", openai: "", openrouter: "", nvidia: "" });
+  const [models, setModels] = useState<Partial<Record<AiProvider, string[]>>>({});
+  const [draftModel, setDraftModel] = useState("");
   const refresh = useCallback(() => api<AiStatus>("GET", "/api/ai/status").then(setStatus).catch(() => {}), []);
-  useEffect(() => { refresh(); }, [refresh, settings?.ai_provider, settings?.ai_openai_model]);
+  useEffect(() => { refresh(); }, [refresh, settings?.ai_provider]);
 
-  const loadModels = useCallback(async (quiet = false) => {
+  const provider: AiProvider = PROVIDERS.includes(settings?.ai_provider as AiProvider) ? (settings!.ai_provider as AiProvider) : "anthropic";
+  const currentModel = provider === "anthropic" ? settings?.ai_model ?? "" : settings?.[MODEL_SETTING[provider]] ?? "";
+  useEffect(() => { setDraftModel(currentModel); }, [currentModel, provider]);
+
+  const loadModels = useCallback(async (name: AiProvider, quiet = false) => {
+    if (name === "anthropic") return;
     try {
-      setOpenaiModels((await api<{ models: string[] }>("GET", "/api/ai/models?provider=openai")).models);
+      const list = (await api<{ models: string[] }>("GET", `/api/ai/models?provider=${name}`)).models;
+      setModels((m) => ({ ...m, [name]: list }));
+      if (!quiet) toast(`${list.length} models available.`);
     } catch (e) {
       if (!quiet) toast(e instanceof Error ? e.message : String(e), "error");
     }
   }, [toast]);
   useEffect(() => {
-    if (status?.providers?.openai?.configured && settings?.ai_provider === "openai" && !openaiModels.length) loadModels(true);
-  }, [status, settings?.ai_provider, openaiModels.length, loadModels]);
+    if (provider !== "anthropic" && status?.providers?.[provider]?.configured && !models[provider]) loadModels(provider, true);
+  }, [status, provider, models, loadModels]);
 
-  const save = async (provider: AiProvider) => {
+  const save = async (name: AiProvider) => {
     try {
-      setStatus(await api<AiStatus>("PUT", "/api/ai/key", { key: keys[provider], provider }));
-      setKeys((k) => ({ ...k, [provider]: "" }));
+      setStatus(await api<AiStatus>("PUT", "/api/ai/key", { key: keys[name], provider: name }));
+      setKeys((k) => ({ ...k, [name]: "" }));
       toast("API key saved on this computer.");
-      if (provider === "openai") loadModels(true);
+      loadModels(name, true);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     }
   };
+  const chooseModel = (value: string) => {
+    const model = value.trim();
+    if (!model || model === currentModel || provider === "anthropic") return;
+    saveSettings({ [MODEL_SETTING[provider]]: model });
+  };
+
   if (!status || !settings) return null;
-  const provider: AiProvider = settings.ai_provider === "openai" ? "openai" : "anthropic";
   const info = status.providers?.[provider];
   if (!info) {
     return (
@@ -56,6 +78,7 @@ function AiSettings() {
       </section>
     );
   }
+  const list = models[provider] ?? [];
   return (
     <section className="card pad col" id="ai">
       <div className="row"><div className="h2 grow">AI assistant</div>
@@ -63,8 +86,8 @@ function AiSettings() {
       <div className="muted">Optional. The AI designs workflows and writes plugin tools. It receives only your request text and OfficeFlow’s list of tools — never your files, file names, paths or history.</div>
       <div className="field">
         <label>Provider</label>
-        <div className="segmented">
-          {(Object.keys(status.providers) as AiProvider[]).map((name) => (
+        <div className="segmented" style={{ flexWrap: "wrap" }}>
+          {PROVIDERS.filter((name) => status.providers[name]).map((name) => (
             <button key={name} className={provider === name ? "on" : ""} onClick={() => saveSettings({ ai_provider: name })}>
               <Icon name="sparkle" size={16} />{status.providers[name].label}
               {status.providers[name].configured && <span className="dot-ok" style={{ marginLeft: 4 }} />}
@@ -77,7 +100,7 @@ function AiSettings() {
         <label>{info.label} API key</label>
         <div className="row">
           <input className="input" type="password" autoComplete="off" value={keys[provider]}
-            placeholder={info.configured ? "Enter a new key to replace the saved one" : provider === "openai" ? "sk-…" : "sk-ant-…"}
+            placeholder={info.configured ? "Enter a new key to replace the saved one" : KEY_PLACEHOLDER[provider]}
             onChange={(e) => setKeys((k) => ({ ...k, [provider]: e.target.value }))} />
           <button className="btn primary" disabled={!keys[provider].trim()} onClick={() => save(provider)}><Icon name="key" size={17} />Save</button>
           {info.configured && <button className="btn danger" onClick={async () => setStatus(await api<AiStatus>("DELETE", `/api/ai/key?provider=${provider}`))}>
@@ -95,12 +118,16 @@ function AiSettings() {
         ) : (
           <>
             <div className="row">
-              <select className="select" value={settings.ai_openai_model} onChange={(e) => saveSettings({ ai_openai_model: e.target.value })}>
-                {[...new Set([settings.ai_openai_model, ...openaiModels])].map((id) => <option key={id} value={id}>{id}</option>)}
-              </select>
-              <button className="btn" disabled={!info.configured} onClick={() => loadModels()}><Icon name="refresh" size={16} />Load my models</button>
+              <input className="input" list={`models-${provider}`} value={draftModel} spellCheck={false}
+                placeholder={info.default_model} onChange={(e) => setDraftModel(e.target.value)}
+                onBlur={(e) => chooseModel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && chooseModel(draftModel)} />
+              <datalist id={`models-${provider}`}>{list.map((id) => <option key={id} value={id} />)}</datalist>
+              <button className="btn" disabled={!info.configured} onClick={() => loadModels(provider)}><Icon name="refresh" size={16} />Load my models</button>
             </div>
-            <div className="help">The list comes from your OpenAI account (only the list of model names is requested).</div>
+            <div className="help">
+              Type to search {list.length ? `${list.length} models` : "the models"} from your {info.label} account (only the list of model names is requested), or type a model name.
+              {provider !== "openai" && " Models that cannot return structured answers are handled automatically; if a model gives unusable answers, choose a larger one."}
+            </div>
           </>
         )}
       </div>

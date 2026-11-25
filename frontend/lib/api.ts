@@ -47,11 +47,13 @@ export interface Settings {
   last_input_dir: string;
   ai_model: string;
   ai_redact: boolean;
-  ai_provider: "anthropic" | "openai";
+  ai_provider: AiProvider;
   ai_openai_model: string;
+  ai_openrouter_model: string;
+  ai_nvidia_model: string;
 }
 
-export type AiProvider = "anthropic" | "openai";
+export type AiProvider = "anthropic" | "openai" | "openrouter" | "nvidia";
 
 export interface AiStatus {
   provider: AiProvider;
@@ -62,7 +64,7 @@ export interface AiStatus {
   model: string;
   models: Record<string, string>;       // Claude models
   openai_model: string;
-  providers: Record<AiProvider, { label: string; configured: boolean; key_hint: string; sdk: boolean }>;
+  providers: Record<AiProvider, { label: string; configured: boolean; key_hint: string; sdk: boolean; model: string; default_model: string }>;
   redact: boolean;
 }
 

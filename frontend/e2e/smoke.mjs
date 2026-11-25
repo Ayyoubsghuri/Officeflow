@@ -154,8 +154,9 @@ try {
   await page.click("#ai button:has-text('Save')");
   await page.waitForSelector("#ai .tag.green:has-text('OpenAI')");
   await page.click("#ai button:has-text('Load my models')");
-  await page.waitForSelector("#ai select option[value='gpt-5-mini']", { state: "attached" });
-  await page.selectOption("#ai select", "gpt-5-mini");
+  await page.waitForSelector("#ai datalist option[value='gpt-5-mini']", { state: "attached" });
+  await page.fill("#ai input[list]", "gpt-5-mini");
+  await page.press("#ai input[list]", "Enter");
   await page.waitForTimeout(400);
   await shot(page, "openai-settings");
   await page.goto(`${base}/assistant/`);
@@ -172,6 +173,27 @@ try {
   check((await page.textContent(".activity")).length > 0 &&
     (await page.$$eval(".activity .faint", (els) => els.some((e) => e.textContent.includes("openai/gpt-5-mini")))),
     "activity log records the OpenAI request");
+
+  // NVIDIA through the OpenAI-compatible path: key, model typed in the search field, workflow.
+  await page.goto(`${base}/settings/`);
+  await page.click("#ai .segmented button:has-text('NVIDIA')");
+  await page.waitForSelector("#ai label:has-text('NVIDIA API key')");
+  await page.fill("#ai input[type=password]", "nvapi-test-0123456789abcdefNVID");
+  await page.click("#ai button:has-text('Save')");
+  await page.waitForSelector("#ai .tag.green:has-text('NVIDIA')");
+  await page.fill("#ai input[list]", "meta/llama-3.3-70b-instruct");
+  await page.press("#ai input[list]", "Enter");
+  await page.waitForTimeout(400);
+  await shot(page, "nvidia-settings");
+  await page.goto(`${base}/assistant/`);
+  await page.waitForSelector(".pill:has-text('NVIDIA')");
+  check((await page.textContent(".pill:has-text('NVIDIA')")).includes("meta/llama-3.3-70b-instruct"),
+    "assistant shows the NVIDIA model");
+  await page.fill(".prompt", "Sort PDFs by reference");
+  await page.click("button:has-text('Review before sending')");
+  await page.click(".sendbox button.primary");
+  await page.waitForSelector("text=Open in Workflow Builder", { timeout: 20000 });
+  check(true, "NVIDIA provider designs a workflow");
 
   for (const path of ["/toolbox/?cat=word", "/history/", "/logs/", "/settings/"]) {
     await page.goto(`${base}${path}`);

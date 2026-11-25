@@ -62,7 +62,8 @@ def _unprotect(kind: str, value: str) -> bytes:
     return raw
 
 
-_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+        "nvidia": "NVIDIA_API_KEY"}
 
 
 def _entries() -> dict:

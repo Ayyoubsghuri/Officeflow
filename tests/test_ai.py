@@ -54,6 +54,7 @@ class FakeClient:
         self.stop_reason = stop_reason
         self.beta = SimpleNamespace(messages=SimpleNamespace(parse=self.parse))
         self.responses = SimpleNamespace(parse=self.parse_openai)       # OpenAI shape
+        self.chat = SimpleNamespace(completions=SimpleNamespace(parse=self.parse_chat))   # OpenRouter / NVIDIA
         self.models = SimpleNamespace(list=lambda: [SimpleNamespace(id=i) for i in
                                                     ("gpt-5", "gpt-5-mini", "text-embedding-3-large", "o3", "whisper-1")])
 
@@ -65,6 +66,10 @@ class FakeClient:
                                usage=SimpleNamespace(input_tokens=100, output_tokens=50,
                                                      cache_read_input_tokens=0, cache_creation_input_tokens=0))
 
+
+    def parse_chat(self, **kwargs):
+        self.calls.append({**kwargs, "messages": list(kwargs["messages"])})
+        return chat_response(parsed=self.answers.pop(0))
 
     def parse_openai(self, **kwargs):
         self.calls.append({**kwargs, "input": list(kwargs["input"])})
@@ -278,13 +283,14 @@ def test_switch_provider_keys_and_models_through_the_api(client):
     client.put("/api/ai/key", json={"key": "sk-proj-test-0123456789abcdefBBBB", "provider": "openai"})
     status = client.get("/api/ai/status").json()
     assert status["provider"] == "anthropic" and status["key_hint"] == "…AAAA"
-    assert status["providers"]["openai"] == {"label": "OpenAI", "configured": True, "key_hint": "…BBBB", "sdk": True}
+    assert status["providers"]["openai"] == {"label": "OpenAI", "configured": True, "key_hint": "…BBBB", "sdk": True,
+                                             "model": "gpt-5", "default_model": "gpt-5"}
     client.put("/api/settings", json={"ai_provider": "openai", "ai_openai_model": "gpt-5-mini"})
     status = client.get("/api/ai/status").json()
     assert (status["provider"], status["model"], status["key_hint"]) == ("openai", "gpt-5-mini", "…BBBB")
     assert keystore.load_api_key("openai").endswith("BBBB") and keystore.load_api_key().endswith("AAAA")
     assert client.put("/api/settings", json={"ai_provider": "other"}).status_code == 400
-    client.app_ref.state.openai_models = lambda key: ai.list_openai_models(key, client=FakeClient())
+    client.app_ref.state.list_models = lambda provider, key: ai.list_provider_models(provider, key, client=FakeClient())
     assert client.get("/api/ai/models?provider=openai").json()["models"] == ["o3", "gpt-5-mini", "gpt-5"]
 
     seen = {}
@@ -302,3 +308,104 @@ def test_switch_provider_keys_and_models_through_the_api(client):
     client.delete("/api/ai/key?provider=openai")
     assert not client.get("/api/ai/status").json()["configured"]
     assert client.get("/api/ai/status").json()["providers"]["anthropic"]["configured"]
+
+
+# -- OpenRouter / NVIDIA (OpenAI-compatible chat APIs) -------------------------------------
+class FakeChat:
+    """Mimics client.chat.completions.parse/create of an OpenAI-compatible service."""
+
+    def __init__(self, behaviour):
+        self.behaviour = behaviour        # list of callables(kwargs) -> response or exception
+        self.calls = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(parse=self._parse, create=self._create))
+
+    def _run(self, kind, kwargs):
+        self.calls.append((kind, {**kwargs, "messages": list(kwargs["messages"])}))
+        result = self.behaviour.pop(0)(kind, kwargs)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def _parse(self, **kwargs):
+        return self._run("parse", kwargs)
+
+    def _create(self, **kwargs):
+        return self._run("create", kwargs)
+
+
+def chat_response(content="", parsed=None, finish="stop", refusal=None):
+    message = SimpleNamespace(content=content, parsed=parsed, refusal=refusal)
+    return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish)],
+                           usage=SimpleNamespace(prompt_tokens=30, completion_tokens=10))
+
+
+def bad_request(text):
+    import httpx2
+    import openai
+
+    response = httpx2.Response(400, request=httpx2.Request("POST", "https://example.invalid/v1/chat/completions"))
+    return openai.BadRequestError(text, response=response, body=None)
+
+
+def test_compatible_provider_uses_strict_schema_when_supported():
+    answer = workflow_answer([("pdf.text", {})])
+    fake = FakeChat([lambda kind, kw: chat_response(parsed=answer)])
+    result = ai.Assistant("k", "openai/gpt-5", client=fake, provider="openrouter").design_workflow("text")
+    kind, call = fake.calls[0]
+    assert kind == "parse" and call["model"] == "openai/gpt-5" and call["response_format"] is ai.WorkflowAnswer
+    assert call["messages"][0]["role"] == "system" and call["messages"][1] == {"role": "user", "content": "text"}
+    assert result["workflow"]["steps"][0]["op"] == "pdf.text" and result["usage"] == {"input_tokens": 30, "output_tokens": 10}
+
+
+def test_compatible_provider_steps_down_to_json_mode_and_plain_text():
+    answer = workflow_answer([("pdf.text", {})])
+    fenced = "Here it is:\n```json\n" + answer.model_dump_json() + "\n```"
+    fake = FakeChat([
+        lambda kind, kw: bad_request("response_format json_schema is not supported"),
+        lambda kind, kw: bad_request("max_tokens must be less than or equal to 4096"),
+        lambda kind, kw: bad_request("response_format type json_object not supported"),
+        lambda kind, kw: chat_response(content=fenced),
+    ])
+    result = ai.Assistant("k", "meta/llama-3.3-70b-instruct", client=fake, provider="nvidia").design_workflow("x")
+    assert result["workflow"]["steps"][0]["op"] == "pdf.text"
+    kinds = [(k, c.get("response_format", {}).get("type") if isinstance(c.get("response_format"), dict) else
+              "schema" if c.get("response_format") else None, c["max_tokens"]) for k, c in fake.calls]
+    assert kinds == [("parse", "schema", 16000), ("create", "json_object", 16000),
+                     ("create", "json_object", 4096), ("create", None, 4096)]
+    assert "matches this JSON schema" in fake.calls[-1][1]["messages"][0]["content"]
+
+
+def test_compatible_provider_refusal_and_unusable_answer():
+    refusing = FakeChat([lambda kind, kw: chat_response(refusal="no")])
+    with pytest.raises(ai.AssistantError, match="declined"):
+        ai.Assistant("k", "x/y", client=refusing, provider="openrouter").design_workflow("x")
+    garbage = FakeChat([lambda kind, kw: chat_response(content="not json"),
+                        lambda kind, kw: chat_response(content="still not json")])
+    with pytest.raises(ai.AssistantError, match="did not return a usable answer"):
+        ai.Assistant("k", "x/y", client=garbage, provider="nvidia").design_workflow("x")
+
+
+def test_nvidia_provider_through_the_api(client):
+    client.put("/api/ai/key", json={"key": "nvapi-test-0123456789abcdefNVID", "provider": "nvidia"})
+    client.put("/api/settings", json={"ai_provider": "nvidia", "ai_nvidia_model": "nvidia/llama-3.1-nemotron-70b-instruct"})
+    status = client.get("/api/ai/status").json()
+    assert (status["provider"], status["model"], status["key_hint"]) == (
+        "nvidia", "nvidia/llama-3.1-nemotron-70b-instruct", "…NVID")
+    assert status["providers"]["openrouter"]["default_model"] == "openai/gpt-5"
+    models = FakeClient()
+    models.models = SimpleNamespace(list=lambda: [SimpleNamespace(id=i) for i in
+                                                  ("meta/llama-3.3-70b-instruct", "nvidia/nv-embedqa-e5-v5", "nvidia/llama-3.1-nemoguard-8b-content-safety")])
+    client.app_ref.state.list_models = lambda provider, key: ai.list_provider_models(provider, key, client=models)
+    assert client.get("/api/ai/models?provider=nvidia").json()["models"] == ["meta/llama-3.3-70b-instruct"]
+    seen = {}
+
+    def factory(provider, key, model):
+        seen.update(provider=provider, key=key, model=model)
+        return ai.Assistant(key, model, provider=provider,
+                            client=FakeChat([lambda kind, kw: chat_response(parsed=workflow_answer([("pdf.text", {})]))]))
+
+    client.app_ref.state.assistant_factory = factory
+    state = wait(client, client.post("/api/ai/jobs", json={"kind": "workflow", "request": "text"}).json())
+    assert state["result"]["workflow"]["steps"][0]["op"] == "pdf.text"
+    assert seen == {"provider": "nvidia", "key": "nvapi-test-0123456789abcdefNVID",
+                    "model": "nvidia/llama-3.1-nemotron-70b-instruct"}

@@ -21,6 +21,8 @@ class Settings:
     ai_provider: str = "anthropic"   # anthropic | openai
     ai_model: str = "claude-opus-5-5"
     ai_openai_model: str = "gpt-5"
+    ai_openrouter_model: str = "openai/gpt-5"
+    ai_nvidia_model: str = "meta/llama-3.3-70b-instruct"
     ai_redact: bool = True           # replace file paths / e-mails in AI requests
 
     def resolved_output_dir(self) -> Path:
