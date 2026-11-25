@@ -26,6 +26,13 @@ from officeflow.services.files import safe_filename, unique_path
 class Step:
     op_id: str
     params: dict[str, Any] = field(default_factory=dict)
+    keep: bool = False          # also save this step's files in the result folder (the last step's always are)
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"op": self.op_id, "params": self.params}
+        if self.keep:
+            data["keep"] = True
+        return data
 
 
 @dataclass
@@ -34,11 +41,12 @@ class Workflow:
     steps: list[Step] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "steps": [{"op": s.op_id, "params": s.params} for s in self.steps]}
+        return {"name": self.name, "steps": [s.to_dict() for s in self.steps]}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Workflow":
-        return cls(data["name"], [Step(s["op"], dict(s.get("params", {}))) for s in data["steps"]])
+        return cls(data["name"], [Step(s["op"], dict(s.get("params", {})), bool(s.get("keep", False)))
+                                  for s in data["steps"]])
 
     def validate(self) -> None:
         """Fail early (before touching any file) on unknown tools, bad
@@ -69,19 +77,23 @@ class WorkflowOutcome:
     summary: str
     steps: list[tuple[str, RunOutcome]] = field(default_factory=list)
     result_dir: Path | None = None
+    kept: list[Path] = field(default_factory=list)      # files of earlier steps marked "keep"
 
     @property
     def outputs(self) -> list[Path]:
-        return self.steps[-1][1].result.outputs if self.steps else []
+        last = self.steps[-1][1].result.outputs if self.steps else []
+        earlier = [p for p in self.kept if p not in last and Path(p).exists()]
+        return earlier + list(last)
 
 
 def run_workflow(
     workflow: Workflow, inputs: Sequence[Path | str], ctx: OperationContext,
     recursive: bool = True, db: Database | None = None, keep_intermediate: bool = False,
 ) -> WorkflowOutcome:
-    """Run the steps in order. Only the final step's files are kept, in one folder
-    named after the workflow; earlier steps work in a temporary folder that is
-    removed at the end (or kept under "Intermediate steps" if asked)."""
+    """Run the steps in order. The final step's files are kept, in one folder
+    named after the workflow, together with the files of any step marked
+    ``keep``; other steps work in a temporary folder that is removed at the end
+    (or kept under "Intermediate steps" if asked)."""
     started, clock = datetime.now(), time.perf_counter()
     outcome = WorkflowOutcome("success", "")
     result_dir = unique_path(ctx.output_dir / safe_filename(workflow.name or "Workflow"))
@@ -115,7 +127,7 @@ def run_workflow(
                     fraction = done / count if count else 0
                     ctx.progress(int((_i + fraction) * 1000), total * 1000, f"{_label} — {message}")
 
-                folder = result_dir if last else work_dir / f"{index + 1:02d} {safe_filename(op.name)}"
+                folder = result_dir if last or step.keep else work_dir / f"{index + 1:02d} {safe_filename(op.name)}"
                 step_ctx = OperationContext(folder, progress, ctx.cancel_event, ctx.log)
                 if index == 0:                      # never read earlier results or the work folder
                     step_ctx.exclude_roots = [ctx.output_dir]
@@ -128,6 +140,9 @@ def run_workflow(
                 if result.status == "warning":
                     outcome.status = "warning"
                 current = result.result.outputs
+                if step.keep and not last:
+                    outcome.kept += [p for p in current if p not in outcome.kept]
+                    outcome.kept += [p for p in result.result.reports if p not in outcome.kept]
                 if not last and not current:
                     outcome.status = "failed"
                     outcome.summary = f"{label} produced no files for the next step."

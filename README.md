@@ -160,6 +160,9 @@ first step, and each step passes its output files to the next.
   that is deleted at the end. Tick **Keep intermediate files** to keep them under `Intermediate steps`
   inside the result folder. A step set to *move* files may only be the last step unless intermediate files
   are kept (otherwise the moved originals would be deleted with the temporary files).
+- To keep the files of an earlier step too, select it and tick **Also save this step’s files in the
+  result** (the node shows *Kept*; the last step shows *Result*). Example: *Compress PDFs* (kept) →
+  *Extract values to Excel* gives the compressed PDFs and the Excel list side by side.
 - Saved workflows open from the dashboard or the builder; the badge shows **Draft** until saved.
 
 ## AI assistant (optional)
@@ -227,6 +230,11 @@ template (`{value}`, `{name}`, `{n}`, `{folder}`), duplicate detection by conten
 files with several values / no match / unreadable / password-protected files, a full preview before
 anything is copied, and an Excel report. Plus: batch rename, extract text, tables → Excel, tables → Word (no template), merge (with
 bookmarks), split, extract pages (`1-3, 5, 10-`), search across PDFs → Excel, compare two PDFs → HTML diff.
+- **Compress PDFs** — lossless (rebuilds the file), balanced (images to 150 dpi) or strong (96 dpi, for
+  e-mail). Writes smaller copies; a file that cannot get smaller is copied unchanged, never made bigger.
+- **Extract values to Excel** — one line per value, `Name: pattern` (e.g. `Reference: \b\d{4}/\d{2}/\d{3}\b`,
+  `Total: Total\s*:?\s*([\d.,]+)`). One row per PDF, one column per value, plus pages, file date and the
+  date it was processed; preview shows what is found before anything is written.
 
 ### Word toolbox
 - **Generate documents from Excel** — one `.docx` per row from a template with `{{Column}}` placeholders

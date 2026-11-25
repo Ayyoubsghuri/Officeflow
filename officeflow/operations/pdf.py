@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -12,8 +14,8 @@ from officeflow.core.operation import (
 from officeflow.core.registry import register
 from officeflow.engines.excel import io as excel_io
 from officeflow.engines.excel.transform import build_pattern
-from officeflow.engines.pdf import content, organizer, pages
-from officeflow.engines.pdf.reader import PDF_EXTENSIONS
+from officeflow.engines.pdf import compress, content, organizer, pages
+from officeflow.engines.pdf.reader import PDF_EXTENSIONS, iter_page_texts
 from officeflow.services.files import safe_filename
 from officeflow.services.textnorm import split_lines, to_western_digits
 
@@ -218,6 +220,154 @@ class TablesToWord(Operation):
                 result.errors.append(str(exc))
                 result.rows.append([path.name, f"Error: {exc}"])
         result.summary = f"{total} table(s) put into {len(result.outputs)} Word document(s)."
+        return result
+
+
+@register
+class CompressPdfs(Operation):
+    id = "pdf.compress"
+    name = "Compress PDFs"
+    category = "pdf"
+    description = ("Make PDFs smaller (for e-mail or archiving): rebuild the file and, if you choose, reduce large "
+                   "images. Writes compressed copies; the originals are not changed.")
+    input_extensions = PDF_EXTENSIONS
+    output_extensions = PDF_EXTENSIONS
+    params = (
+        Param("level", "Compression", ParamType.CHOICE, "balanced",
+              choices=(("lossless", "Lossless — same quality, smaller structure"),
+                       ("balanced", "Balanced — images reduced to 150 dpi (good for screen and print)"),
+                       ("strong", "Strong — images reduced to 96 dpi (smallest, for e-mail)"))),
+    )
+
+    def run(self, inputs, params, ctx):
+        result = OperationResult("", headers=["File", "Before", "After", "Saved"])
+        before_total = after_total = 0
+        for index, path in enumerate(inputs):
+            ctx.progress(index, len(inputs), path.name)
+            ctx.check_cancelled()
+            out = ctx.out_path(path.name)
+            try:
+                before, after = compress.compress_pdf(path, out, params["level"])
+            except OperationError as exc:
+                ctx.release(out)
+                result.errors.append(str(exc))
+                result.rows.append([path.name, "", "", f"Error: {exc}"])
+                continue
+            before_total, after_total = before_total + before, after_total + after
+            saved = f"{100 - round(100 * after / before)}%" if before else "0%"
+            result.outputs.append(out)
+            result.rows.append([path.name, compress.human_size(before), compress.human_size(after),
+                                saved if after < before else "Already compact"])
+        ctx.progress(len(inputs), len(inputs), "Done")
+        saved = before_total - after_total
+        result.summary = (f"{len(result.outputs)} of {len(inputs)} PDF(s) compressed: "
+                          f"{compress.human_size(before_total)} → {compress.human_size(after_total)}"
+                          f"{f' ({round(100 * saved / before_total)}% smaller)' if before_total and saved > 0 else ''}.")
+        return result
+
+
+_FIELD_LINE = re.compile(r"^\s*([^:()\[\]{}\\^$*+?|.]{1,40}?)\s*:\s+(.+)$")
+
+
+def parse_fields(text: str) -> list[tuple[str, str]]:
+    """One field per line: ``Name: pattern``, or just a pattern (named Value 1, Value 2…)."""
+    fields: list[tuple[str, str]] = []
+    for number, line in enumerate((l for l in text.splitlines() if l.strip()), 1):
+        match = _FIELD_LINE.match(line)
+        fields.append((match.group(1).strip(), match.group(2).strip()) if match else (f"Value {number}", line.strip()))
+    if not fields:
+        raise OperationError("Add at least one value to extract, e.g.  Reference: \\b\\d{4}/\\d{2}/\\d{3}\\b")
+    return fields
+
+
+@register
+class ValuesToExcel(Operation):
+    id = "pdf.values"
+    name = "Extract values to Excel"
+    category = "pdf"
+    description = ("Read each PDF and put the values your patterns find (reference, date, amount…) in one Excel "
+                   "sheet: one row per PDF, one column per value, with the file date and the date it was processed.")
+    input_extensions = PDF_EXTENSIONS
+    output_extensions = (".xlsx",)
+    params = (
+        Param("fields", "Values to extract (one per line:  Name: pattern)", ParamType.MULTILINE,
+              "Reference: \\b\\d{4}/\\d{2}/\\d{3}\\b\nDate: \\b\\d{2}/\\d{2}/\\d{4}\\b", required=True,
+              help="Each line is a column name, a colon, then a regular expression. If the pattern has parentheses, "
+                   "only the part inside the first pair is kept, e.g.  Total: Total\\s*:?\\s*([\\d.,]+)"),
+        Param("matches", "When a value is found several times", ParamType.CHOICE, "first",
+              choices=(("first", "Keep the first one"), ("all", "Keep them all, separated by “; ”"))),
+        Param("output_name", "Excel file name", default="Extracted values", required=True),
+        IGNORE_CASE, WESTERN, MAX_PAGES,
+    )
+
+    def _patterns(self, params) -> list[tuple[str, re.Pattern[str]]]:
+        flags = re.MULTILINE | (re.IGNORECASE if params["ignore_case"] else 0)
+        compiled = []
+        for name, text in parse_fields(params["fields"]):
+            try:
+                compiled.append((name, re.compile(to_western_digits(text) if params["western_digits"] else text, flags)))
+            except re.error as exc:
+                raise OperationError(f"Invalid pattern for “{name}”: {exc}") from None
+        return compiled
+
+    def _row(self, path: Path, patterns, params) -> dict[str, str]:
+        found: dict[str, list[str]] = {name: [] for name, _ in patterns}
+        pages = 0
+        for text in iter_page_texts(path, params["max_pages"]):
+            pages += 1
+            for name, pattern in patterns:
+                if params["matches"] == "first" and found[name]:
+                    continue
+                for value in organizer.find_values(text, [pattern], params["western_digits"]):
+                    if value not in found[name]:
+                        found[name].append(value)
+        row = {"File": path.name, "Folder": str(path.parent)}
+        for name, values in found.items():
+            row[name] = values[0] if params["matches"] == "first" and values else "; ".join(values)
+        row["Pages"] = str(pages)
+        row["File date"] = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        return row
+
+    def preview(self, inputs, params, ctx):
+        patterns = self._patterns(params)
+        names = [name for name, _ in patterns]
+        rows = []
+        for index, path in enumerate(inputs[:20]):
+            ctx.progress(index, min(len(inputs), 20), path.name)
+            try:
+                row = self._row(path, patterns, params)
+                rows.append([row["File"]] + [row[n] or "—" for n in names])
+            except OperationError as exc:
+                rows.append([path.name] + [f"Error: {exc}"] + [""] * (len(names) - 1))
+        more = f" (first 20 of {len(inputs)} shown)" if len(inputs) > 20 else ""
+        return Preview(f"Values found{more}. Nothing has been written yet.", ["File"] + names, rows)
+
+    def run(self, inputs, params, ctx):
+        patterns = self._patterns(params)
+        names = [name for name, _ in patterns]
+        processed = datetime.now().strftime("%Y-%m-%d %H:%M")
+        records, result = [], OperationResult("", headers=["File"] + names)
+        for index, path in enumerate(inputs):
+            ctx.progress(index, len(inputs), path.name)
+            ctx.check_cancelled()
+            try:
+                row = self._row(path, patterns, params)
+            except OperationError as exc:
+                result.errors.append(str(exc))
+                result.rows.append([path.name] + [f"Error: {exc}"] + [""] * (len(names) - 1))
+                continue
+            row["Processed on"] = processed
+            records.append(row)
+            result.rows.append([row["File"]] + [row[n] for n in names])
+            missing = [n for n in names if not row[n]]
+            if missing:
+                result.warnings.append(f"{path.name}: not found — {', '.join(missing)}.")
+        columns = ["File"] + names + ["Pages", "File date", "Processed on", "Folder"]
+        report = ctx.out_path(safe_filename(params["output_name"]) + ".xlsx")
+        excel_io.write_table(pd.DataFrame(records, columns=columns), report, "Values")
+        result.outputs, result.reports = [report], [report]
+        complete = sum(all(r[n] for n in names) for r in records)
+        result.summary = (f"{len(records)} PDF(s) read, all values found in {complete}. Saved to {report.name}.")
         return result
 
 

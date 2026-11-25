@@ -103,6 +103,13 @@ try {
   await page.click(".lib-card:has-text('Smoke')");
   await page.waitForSelector(".flow-node:has-text('PDF Smart Organizer')");
   check((await page.inputValue(".folderinput")) === "Invoices/2024", "workflow opens from the library with its folder");
+  check((await page.$$(".flow-node .tag:has-text('Result')")).length === 1, "the last step is marked as the result");
+  await page.click(".flow-node:has-text('PDF Smart Organizer')");
+  await page.click(".keepbox .check");
+  await page.waitForSelector(".flow-node:has-text('PDF Smart Organizer') .tag:has-text('Kept')");
+  check(true, "an earlier step can also be kept in the result");
+  await page.waitForTimeout(400);
+  await shot(page, "keep-step");
   await page.goto(`${base}/`);
   await page.waitForSelector(".fcard:has(.fcard-title:text-is('Invoices'))");
   check(true, "home shows workflow folders");

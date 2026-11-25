@@ -186,6 +186,7 @@ export interface JobState {
 export interface WorkflowStep {
   op: string;
   params: Record<string, unknown>;
+  keep?: boolean;               // also save this step's files in the result folder
 }
 
 export interface WorkflowDef {

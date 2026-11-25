@@ -206,3 +206,93 @@ def test_tables_to_excel(tmp_path, run):
     frame = pd.read_excel(outcome.result.outputs[0], dtype=str)
     assert frame.to_dict("list") == {"Ref": ["001", "002"], "Client": ["Ali", "Sara"], "Total": ["10", "20"]}
     assert "plain.pdf: no table detected." in outcome.result.warnings
+
+
+def _photo_pdf(path: Path) -> Path:
+    """A PDF holding one large, noisy photo-like image (compresses well when downsampled)."""
+    import random
+    import zlib
+
+    random.seed(1)
+    width = height = 1200
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        for x in range(width):
+            v = (x * 3 + y * 5 + random.randint(0, 40)) % 256
+            raw += bytes((v, (v * 7) % 256, (255 - v)))
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        import struct
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    import struct
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.insert_text((72, 60), "Ref 2024/01/005")
+        page.insert_image(pymupdf.Rect(72, 80, 372, 380), stream=png)
+        doc.save(path)
+    return path
+
+
+def test_compress_pdfs_writes_smaller_copies(tmp_path, run):
+    source = _photo_pdf(tmp_path / "in" / "scan.pdf")
+    before = source.read_bytes()
+    outcome = run("pdf.compress", [source], {"level": "strong"})
+    assert outcome.status == "success", outcome.result.summary
+    out = outcome.result.outputs[0]
+    assert out.name == "scan.pdf" and out.parent != source.parent
+    assert out.stat().st_size < len(before) * 0.7
+    assert source.read_bytes() == before                                   # original untouched
+    assert "2024/01/005" in next(iter_page_texts(out))
+    # a file that cannot get smaller is copied as it is, never made bigger
+    tiny = make_pdf(tmp_path / "in2" / "tiny.pdf", ["x"])
+    again = run("pdf.compress", [tiny], {"level": "lossless"}, out="out2")
+    assert again.result.outputs[0].stat().st_size <= tiny.stat().st_size
+
+
+def test_values_to_excel_one_row_per_pdf(tmp_path, run):
+    folder = tmp_path / "in"
+    make_pdf(folder / "a.pdf", ["Invoice 2024/01/005 dated 03/02/2024 Total: 1,250.00", "again 2024/01/005"])
+    make_pdf(folder / "b.pdf", ["Invoice 2024/01/006 no date"])
+    params = {"fields": "Reference: \\b\\d{4}/\\d{2}/\\d{3}\\b\nDate: \\b\\d{2}/\\d{2}/\\d{4}\\b\n"
+                        "Total: Total\\s*:?\\s*([\\d.,]+)", "output_name": "Invoices"}
+    preview = registry_get("pdf.values").preview(sorted(folder.glob("*.pdf")), registry_get("pdf.values").clean_params(params),
+                                                 _ctx(tmp_path))
+    assert preview.headers == ["File", "Reference", "Date", "Total"]
+    outcome = run("pdf.values", [folder], params)
+    assert outcome.status == "warning"                                     # b.pdf has no date or total
+    frame = pd.read_excel(outcome.result.outputs[0], dtype=str).fillna("")
+    assert list(frame.columns) == ["File", "Reference", "Date", "Total", "Pages", "File date", "Processed on", "Folder"]
+    assert frame.loc[0, ["File", "Reference", "Date", "Total", "Pages"]].tolist() == ["a.pdf", "2024/01/005", "03/02/2024", "1,250.00", "2"]
+    assert frame.loc[1, ["File", "Reference", "Date"]].tolist() == ["b.pdf", "2024/01/006", ""]
+    assert outcome.result.outputs[0].name == "Invoices.xlsx"
+
+
+def test_workflow_keeps_files_of_a_marked_step(tmp_path):
+    from officeflow.core.operation import OperationContext
+    from officeflow.core.workflow import Step, Workflow, run_workflow
+
+    _photo_pdf(tmp_path / "in" / "scan.pdf")
+    workflow = Workflow("Compress and list", [Step("pdf.compress", {}, keep=True),
+                                             Step("pdf.values", {"fields": "Ref: \\d{4}/\\d{2}/\\d{3}"})])
+    assert Workflow.from_dict(workflow.to_dict()).steps[0].keep
+    outcome = run_workflow(workflow, [tmp_path / "in"], OperationContext(tmp_path / "out"))
+    assert outcome.status == "success", outcome.summary
+    names = sorted(p.name for p in outcome.result_dir.iterdir())
+    assert names == ["Extracted values.xlsx", "scan.pdf"]
+    assert sorted(p.name for p in outcome.outputs) == names
+    frame = pd.read_excel(outcome.result_dir / "Extracted values.xlsx", dtype=str)
+    assert frame.loc[0, "Ref"] == "2024/01/005"
+    assert not list((tmp_path / "out").glob(".officeflow-work-*"))
+
+
+def registry_get(op_id):
+    from officeflow.core import registry
+    return registry.get(op_id)
+
+
+def _ctx(tmp_path):
+    from officeflow.core.operation import OperationContext
+    return OperationContext(tmp_path / "preview")

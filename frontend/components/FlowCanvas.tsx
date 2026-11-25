@@ -26,6 +26,7 @@ export interface FlowNode {
   inFormats?: string;           // undefined for the start node
   outFormats: string;
   warning?: string;
+  saves?: "result" | "kept";    // whose files end up in the result folder
 }
 
 export interface CanvasHandle {
@@ -182,6 +183,8 @@ export default function FlowCanvas({ nodes, selected, broken, positions, onPosit
               <div className="row" style={{ gap: 6 }}>
                 <span className={`tag ${node.chipLime ? "lime" : ""}`}>{node.chip}</span>
                 {node.status && <span className={`tag ${node.status.tone}`}>{node.status.label}</span>}
+                {node.saves && <span className="tag green" title="Its files are saved in the result folder">
+                  <Icon name="save" size={11} />{node.saves === "result" ? "Result" : "Kept"}</span>}
               </div>
               <div className="flow-title ellipsis">{node.title}</div>
               <div className={`flow-sub ellipsis ${node.warning ? "warn" : ""}`} title={node.warning || node.subtitle}>{node.warning || node.subtitle}</div>

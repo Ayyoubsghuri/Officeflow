@@ -82,7 +82,8 @@ class FakeClient:
 def workflow_answer(steps, missing=()):
     return ai.WorkflowAnswer(
         name="Sort invoices", explanation="Sorts PDFs by reference.",
-        steps=[ai.StepDraft(tool_id=t, settings=[ai.Setting(key=k, value=v) for k, v in s.items()]) for t, s in steps],
+        steps=[ai.StepDraft(tool_id=t, settings=[ai.Setting(key=k, value=v) for k, v in s.items()], keep=False)
+               for t, s in steps],
         missing_tools=[ai.MissingTool(**m) for m in missing])
 
 

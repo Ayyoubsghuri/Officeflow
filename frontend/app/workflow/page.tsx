@@ -7,7 +7,7 @@ import AddStepMenu from "@/components/AddStepMenu";
 import FlowCanvas, { type CanvasHandle, type FlowNode } from "@/components/FlowCanvas";
 import Icon from "@/components/Icon";
 import InputList from "@/components/InputList";
-import ParamForm, { defaults } from "@/components/ParamForm";
+import ParamForm, { Check, defaults } from "@/components/ParamForm";
 import RunPanel from "@/components/RunPanel";
 import { api, type Operation, type WorkflowDef } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
@@ -18,6 +18,7 @@ interface StepState {
   uid: string;
   op: string;
   params: Record<string, unknown>;
+  keep?: boolean;
 }
 interface Snapshot {
   name: string;
@@ -70,7 +71,7 @@ function Builder() {
   const { job, error, start, cancel, setError } = useJob();
 
   const ops = useMemo(() => steps.map((s) => find(s.op)).filter(Boolean) as Operation[], [steps, find]);
-  const definition = useCallback((): WorkflowDef => ({ name: name.trim(), steps: steps.map((s) => ({ op: s.op, params: s.params })) }), [name, steps]);
+  const definition = useCallback((): WorkflowDef => ({ name: name.trim(), steps: steps.map((s) => ({ op: s.op, params: s.params, ...(s.keep ? { keep: true } : {}) })) }), [name, steps]);
   const isSaved = saved !== null && saved === JSON.stringify(definition()) && (savedFolder ?? "") === folder.trim();
 
   useEffect(() => {
@@ -89,8 +90,8 @@ function Builder() {
       setName(data.name);
       setFolder(data.folder ?? "");
       setSavedFolder(data.folder ?? "");
-      setSteps(data.steps.map((s) => ({ uid: uid(), op: s.op, params: { ...s.params } })));
-      setSaved(JSON.stringify({ name: data.name, steps: data.steps.map((s) => ({ op: s.op, params: s.params })) }));
+      setSteps(data.steps.map((s) => ({ uid: uid(), op: s.op, params: { ...s.params }, keep: !!s.keep })));
+      setSaved(JSON.stringify({ name: data.name, steps: data.steps.map((s) => ({ op: s.op, params: s.params, ...(s.keep ? { keep: true } : {}) })) }));
       setSelected(START);
       setPositions({});
       setUndo([]);
@@ -119,7 +120,7 @@ function Builder() {
       setName(draft.name);
       setFolder("");
       setSavedFolder(null);
-      setSteps(draft.steps.filter((s) => find(s.op)).map((s) => ({ uid: uid(), op: s.op, params: { ...defaults(find(s.op)!.params), ...s.params } })));
+      setSteps(draft.steps.filter((s) => find(s.op)).map((s) => ({ uid: uid(), op: s.op, params: { ...defaults(find(s.op)!.params), ...s.params }, keep: !!s.keep })));
       setSaved(null);
       setSelected(START);
       setPositions({});
@@ -285,6 +286,7 @@ function Builder() {
       status: statusOf(step.uid, index), subtitle: summary(op, step.params),
       inFormats: formats(op.input_extensions), outFormats: formats(op.output_extensions),
       warning: readable ? undefined : `Cannot read ${formats(flowingOut(ops, index - 1, startExts) ?? [])}`,
+      saves: index === steps.length - 1 ? "result" : step.keep ? "kept" : undefined,
     });
   });
 
@@ -348,6 +350,18 @@ function Builder() {
                     onClick={() => remove(selectedIndex)}><Icon name="trash" size={16} />Remove</button>
                 </div>
                 {removeCheck(selectedIndex) && <div className="help">Can’t remove: {removeCheck(selectedIndex).toLowerCase()}.</div>}
+                {selectedIndex < steps.length - 1 ? (
+                  <div className="keepbox">
+                    <Check on={!!steps[selectedIndex].keep} label="Also save this step’s files in the result"
+                      onChange={(v) => change(steps.map((s, k) => (k === selectedIndex ? { ...s, keep: v } : s)))} />
+                    <div className="help" style={{ marginTop: 4 }}>
+                      Normally only the last step’s files are saved. Turn this on to keep these too — for example the
+                      compressed PDFs as well as the Excel list made from them.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="help" style={{ marginTop: 0 }}>This is the last step: its files are saved in the result folder.</div>
+                )}
                 <div className="caption" style={{ marginTop: 6 }}>Settings</div>
                 <ParamForm params={selectedOp.params} values={steps[selectedIndex].params} onChange={(v) => editParams(selectedIndex, v)} />
               </motion.div>

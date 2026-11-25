@@ -46,6 +46,7 @@ class Setting(BaseModel):
 class StepDraft(BaseModel):
     tool_id: str
     settings: list[Setting]
+    keep: bool = Field(description="True to also save this step's files in the result (the last step's always are).")
 
 
 class MissingTool(BaseModel):
@@ -83,6 +84,8 @@ Rules:
 - Values are text: "true"/"false" for switches, digits for numbers, one of the listed choices for choice settings.
   Regular expressions use Python syntax; put one pattern per line in multiline settings.
 - Keep workflows as short as the task allows. Prefer tools that keep original files untouched (no "move").
+- Only the last step's files are saved, unless a step has keep=true. Set keep=true on an earlier step when the user
+  also wants its files (e.g. compressed PDFs kept as well as the Excel list extracted from them).
 - Prefer tools that need nothing from the user beyond the input files. Use a tool that needs a template or another
   file (for example word.generate) only when the user says they have one; to put tables into Word use
   pdf.tables_word or word.from_excel, which need no template.
@@ -475,7 +478,7 @@ class Assistant:
                         notes.append(f"Step {number} ({op.name}): choose “{param.label}” before running.")
                     else:
                         problems.append(f"Step {number} ({op.name}), setting {param.key}: {exc}")
-            steps.append(Step(op.id, params))
+            steps.append(Step(op.id, params, keep=draft.keep and number < len(answer.steps)))
         workflow = Workflow(answer.name.strip()[:80] or "AI workflow", steps)
         if steps and not problems:
             try:
