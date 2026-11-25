@@ -47,8 +47,8 @@ try {
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
   await page.goto(`${base}/?token=${token}`);
-  await page.waitForSelector(".home-title");
-  check((await page.$$(".home-tile")).length === 0 && !(await page.$("text=Tools (")), "home shows workflows only, no tool cards");
+  await page.waitForSelector(".info");
+  check((await page.$$(".fcard")).length === 0 && !(await page.$("text=Tools (")), "home shows workflows only, no tool cards");
   await page.goto(`${base}/tool/?id=pdf.organize`);
   await page.waitForSelector("h1:has-text('PDF Smart Organizer')");
   await page.click("button:has-text('Folder')");
@@ -104,16 +104,20 @@ try {
   await page.waitForSelector(".flow-node:has-text('PDF Smart Organizer')");
   check((await page.inputValue(".folderinput")) === "Invoices/2024", "workflow opens from the library with its folder");
   await page.goto(`${base}/`);
-  await page.waitForSelector(".home-tile.dir:has-text('Invoices')");
+  await page.waitForSelector(".fcard:has(.fcard-title:text-is('Invoices'))");
   check(true, "home shows workflow folders");
-  await page.click(".home-tile.dir:has-text('Invoices')");
-  await page.click(".home-tile.dir:has-text('2024')");
-  await page.waitForSelector(".home-tile.flow.on:has-text('Smoke')");
-  await page.click(".home-open");
+  await page.click(".fcard:has(.fcard-title:text-is('Invoices'))");
+  await page.click(".fcard:has(.fcard-title:text-is('2024'))");
+  await page.click(".fcard:has(.fcard-title:text-is('Smoke'))");
+  await page.waitForSelector(".fcard.on:has(.fcard-title:text-is('Smoke'))");
+  check((await page.textContent(".info")).includes("PDF Smart Organizer"), "Info panel shows the selected workflow's tools");
+  await page.waitForTimeout(600);
+  await shot(page, "home-selected");
+  await page.click(".info button:has-text('Open workflow')");
   await page.waitForSelector(".flow-node:has-text('PDF Smart Organizer')");
   check(true, "a workflow folder on the home page opens the workflow");
   await page.goto(`${base}/`);
-  await page.click(".home-tile.dir:has-text('Invoices')");
+  await page.waitForSelector(".fcard:has(.fcard-title:text-is('Invoices'))");
   await page.waitForTimeout(800);
   await shot(page, "dashboard-workflows");
 

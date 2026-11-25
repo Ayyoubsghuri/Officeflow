@@ -120,9 +120,11 @@ relying on them.
 
 ## Interface
 
-- **Home:** your workflows as glass folders. Click a folder to go into it (the path at the top takes you
-  back), click a workflow to select it and see it in the deck below (formats, last run, success rate), and
-  double-click it, press Enter or use **Open** to open it ready to run. Tools live in their toolboxes, not here.
+- **Home:** your workflows as folder cards, with search and a **Filter** (saved, AI proposals, ran but not
+  saved, never run, failed last time). Click a folder to go into it (the back arrow and the path take you
+  back); click a workflow to select it and see it in the **Info** panel on the right (runs, success rate,
+  failed runs, formats, last run, its tools); double-click it, press Enter or use **Open workflow** to open
+  it ready to run. With nothing selected, Info sums up the current folder. Tools live in their toolboxes.
 - **Custom title bar:** the window has no Windows header. The app's top bar is the title bar: drag it to
   move the window, double-click to maximise, use its own minimise/maximise/close buttons, and resize from
   the window edges.
