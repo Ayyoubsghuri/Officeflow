@@ -116,3 +116,75 @@ def format_document(source: Path, destination: Path, options: FormatOptions) -> 
             paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     document.save(str(destination))
     return stats
+
+
+def _cell_text(value: object) -> str:
+    if value is None or (isinstance(value, float) and value != value):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d") if getattr(value, "hour", 0) == 0 and getattr(value, "minute", 0) == 0 \
+            else value.strftime("%Y-%m-%d %H:%M")
+    return str(value)
+
+
+def _shade(cell, color: str) -> None:
+    tcpr = cell._tc.get_or_add_tcPr()
+    shd = tcpr.makeelement(qn("w:shd"), {qn("w:val"): "clear", qn("w:color"): "auto", qn("w:fill"): color})
+    tcpr.append(shd)
+
+
+def tables_to_docx(tables: list[tuple[str, pd.DataFrame]], destination: Path, headings: bool = True,
+                   landscape: str = "auto") -> int:
+    """Write tables into a new Word document, no template needed: one titled,
+    bordered table per entry, header row bold and shaded, right-to-left when the
+    table contains Arabic, landscape pages for wide tables (``landscape``:
+    "auto", "yes" or "no"). Returns the number of tables written."""
+    import docx
+    from docx.enum.section import WD_ORIENT
+
+    document = docx.Document()
+    section = document.sections[0]
+    widest = max((len(frame.columns) for _, frame in tables), default=0)
+    if landscape == "yes" or (landscape == "auto" and widest > 6):
+        section.orientation = WD_ORIENT.LANDSCAPE
+        section.page_width, section.page_height = section.page_height, section.page_width
+    for margin in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
+        setattr(section, margin, Cm(1.8))
+    small = Pt(9) if widest > 8 else Pt(10)
+
+    for index, (title, frame) in enumerate(tables):
+        header = [str(c) for c in frame.columns]
+        body = [[_cell_text(v) for v in row] for row in frame.itertuples(index=False)]
+        arabic = contains_arabic(" ".join(header + [c for row in body for c in row]))
+        if headings and title:
+            heading = document.add_heading(title, level=2)
+            if arabic:
+                heading.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                _set_rtl(heading)
+        table = document.add_table(rows=1 + len(body), cols=max(len(header), 1))
+        table.style = "Table Grid"
+        if arabic:
+            tblpr = table._tbl.tblPr
+            tblpr.append(tblpr.makeelement(qn("w:bidiVisual"), {}))
+        for r, values in enumerate([header] + body):
+            for c, text in enumerate(values):
+                cell = table.rows[r].cells[c]
+                paragraph = cell.paragraphs[0]
+                run = paragraph.add_run(text)
+                run.font.size = small
+                if r == 0:
+                    run.bold = True
+                    _shade(cell, "DFF9E7")
+                if arabic:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    _set_rtl(paragraph)
+        # the first row repeats at the top of every page the table runs over
+        trpr = table.rows[0]._tr.get_or_add_trPr()
+        trpr.append(trpr.makeelement(qn("w:tblHeader"), {}))
+        if index < len(tables) - 1:
+            document.add_paragraph()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    document.save(str(destination))
+    return len(tables)

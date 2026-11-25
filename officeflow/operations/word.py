@@ -16,6 +16,11 @@ from officeflow.engines.word import content, convert, generate, merge
 from officeflow.engines.word.document import WORD_EXTENSIONS, iter_paragraphs, open_docx, replace_in_document
 from officeflow.services.files import safe_filename
 
+HEADINGS = Param("headings", "Put a title above each table", ParamType.BOOL, True)
+LANDSCAPE = Param("landscape", "Page orientation", ParamType.CHOICE, "auto",
+                  choices=(("auto", "Landscape only for wide tables (more than 6 columns)"),
+                           ("yes", "Always landscape"), ("no", "Always portrait")))
+
 SHEET = Param("sheet", "Sheet", help="Sheet name or number. Leave empty for the first sheet.",
               placeholder="First sheet")
 
@@ -259,3 +264,43 @@ class WordToPdf(_EachDocument):
             ctx.release(out)
             raise
         return [out], "Converted", []
+
+
+@register
+class ExcelToWord(Operation):
+    id = "word.from_excel"
+    name = "Excel tables to Word"
+    category = "word"
+    description = ("Put the sheets of Excel or CSV files into a new Word document as formatted tables "
+                   "(one document per file). No template needed.")
+    input_extensions = excel_io.TABLE_EXTENSIONS
+    output_extensions = (".docx",)
+    params = (
+        Param("sheets", "Sheets", ParamType.CHOICE, "all",
+              choices=(("all", "Every sheet (one table each)"), ("first", "First sheet only"))),
+        HEADINGS, LANDSCAPE,
+    )
+
+    def run(self, inputs, params, ctx):
+        result = OperationResult("", headers=["File", "Tables"])
+        for index, path in enumerate(inputs):
+            ctx.progress(index, len(inputs), path.name)
+            try:
+                sheets = excel_io.read_all_sheets(path)
+                if params["sheets"] == "first":
+                    sheets = dict(list(sheets.items())[:1])
+                tables = [(name, frame) for name, frame in sheets.items() if not frame.empty]
+                if not tables:
+                    result.warnings.append(f"{path.name}: no data found.")
+                    result.rows.append([path.name, "0"])
+                    continue
+                out = ctx.out_path(f"{path.stem}.docx")
+                content.tables_to_docx(tables, out, params["headings"], params["landscape"])
+                result.outputs.append(out)
+                result.rows.append([path.name, str(len(tables))])
+            except OperationError as exc:
+                result.errors.append(str(exc))
+                result.rows.append([path.name, f"Error: {exc}"])
+        ctx.progress(len(inputs), len(inputs), "Done")
+        result.summary = f"{len(result.outputs)} Word document(s) created from {len(inputs)} file(s)."
+        return result

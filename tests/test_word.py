@@ -140,3 +140,42 @@ def test_excel_to_word_to_pdf_workflow(tmp_path):
     assert [name for name, _ in outcome.steps] == [
         "Clean and normalize data", "Generate documents from Excel", "Convert Word to PDF", "Extract PDF text"]
     assert "Dear Ali, amount: 5 MAD" in outcome.outputs[0].read_text(encoding="utf-8")
+
+
+def test_excel_tables_to_word_without_template(tmp_path, run):
+    path = tmp_path / "data.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame({"Ref": ["007", "008"], "Total": [10, 20.5]}).to_excel(writer, sheet_name="Invoices", index=False)
+        pd.DataFrame({"الاسم": ["علي"], "المبلغ": [5]}).to_excel(writer, sheet_name="Arabic", index=False)
+    outcome = run("word.from_excel", [path])
+    assert outcome.status == "success", outcome.result.summary
+    document = open_docx(outcome.result.outputs[0])
+    assert [p.text for p in document.paragraphs if p.style.name.startswith("Heading")] == ["Invoices", "Arabic"]
+    first, second = document.tables
+    assert [[c.text for c in row.cells] for row in first.rows] == [["Ref", "Total"], ["007", "10"], ["008", "20.5"]]
+    assert first.rows[0].cells[0].paragraphs[0].runs[0].bold
+    assert second._tbl.tblPr.find(qn("w:bidiVisual")) is not None          # Arabic table reads right to left
+
+
+def test_pdf_tables_to_word_and_workflow_chain(tmp_path, run):
+    from officeflow.core.registry import get
+    from officeflow.core.workflow import Step, Workflow
+
+    path = tmp_path / "t.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        rows = [["Ref", "Client", "Total"], ["001", "Ali", "10"], ["002", "Sara", "20"]]
+        for r, row in enumerate(rows):
+            for c, value in enumerate(row):
+                rect = pymupdf.Rect(72 + c * 100, 72 + r * 24, 172 + c * 100, 96 + r * 24)
+                page.draw_rect(rect)
+                page.insert_text((rect.x0 + 4, rect.y0 + 16), value)
+        doc.save(path)
+    outcome = run("pdf.tables_word", [path])
+    document = open_docx(outcome.result.outputs[0])
+    assert outcome.result.outputs[0].name == "t - tables.docx"
+    assert [[c.text for c in row.cells] for row in document.tables[0].rows] == rows
+    assert document.paragraphs[0].text == "Page 1 – Table 1"
+    # PDF → Excel → Word is also a valid chain now, with no template.
+    assert get("pdf.tables_word").output_extensions == (".docx",)
+    Workflow("Tables", [Step("pdf.tables"), Step("word.from_excel")]).validate()

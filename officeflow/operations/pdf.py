@@ -180,6 +180,48 @@ class TablesToExcel(Operation):
 
 
 @register
+class TablesToWord(Operation):
+    id = "pdf.tables_word"
+    name = "Extract tables to Word"
+    category = "pdf"
+    description = ("Detect tables in text-based PDFs and put them in a new Word document as formatted tables "
+                   "(one document per PDF). No template needed.")
+    input_extensions = PDF_EXTENSIONS
+    output_extensions = (".docx",)
+    params = (
+        Param("headings", "Put “Page N – Table N” above each table", ParamType.BOOL, True),
+        Param("landscape", "Page orientation", ParamType.CHOICE, "auto",
+              choices=(("auto", "Landscape only for wide tables (more than 6 columns)"),
+                       ("yes", "Always landscape"), ("no", "Always portrait"))),
+    )
+
+    def run(self, inputs, params, ctx):
+        from officeflow.engines.word.content import tables_to_docx
+
+        result = OperationResult("", headers=["File", "Tables"])
+        total = 0
+        for index, path in enumerate(inputs):
+            ctx.progress(index, len(inputs), path.name)
+            try:
+                tables = content.extract_tables(path)
+                if not tables:
+                    result.warnings.append(f"{path.name}: no table detected.")
+                    result.rows.append([path.name, "0"])
+                    continue
+                out = ctx.out_path(path.stem + " - tables.docx")
+                tables_to_docx([(f"Page {page} – Table {n}", frame) for n, (page, frame) in enumerate(tables, 1)],
+                               out, params["headings"], params["landscape"])
+                result.outputs.append(out)
+                result.rows.append([path.name, str(len(tables))])
+                total += len(tables)
+            except OperationError as exc:
+                result.errors.append(str(exc))
+                result.rows.append([path.name, f"Error: {exc}"])
+        result.summary = f"{total} table(s) put into {len(result.outputs)} Word document(s)."
+        return result
+
+
+@register
 class MergePdfs(Operation):
     id = "pdf.merge"
     name = "Merge PDFs"

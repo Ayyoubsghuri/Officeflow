@@ -223,7 +223,7 @@ Windows-1256/1252 and the delimiter; keeps leading zeros).
 selects the value), one output folder per value regardless of the source folder, optional renaming
 template (`{value}`, `{name}`, `{n}`, `{folder}`), duplicate detection by content hash, policies for
 files with several values / no match / unreadable / password-protected files, a full preview before
-anything is copied, and an Excel report. Plus: batch rename, extract text, tables → Excel, merge (with
+anything is copied, and an Excel report. Plus: batch rename, extract text, tables → Excel, tables → Word (no template), merge (with
 bookmarks), split, extract pages (`1-3, 5, 10-`), search across PDFs → Excel, compare two PDFs → HTML diff.
 
 ### Word toolbox
@@ -236,6 +236,8 @@ bookmarks), split, extract pages (`1-3, 5, 10-`), search across PDFs → Excel, 
 - **Format documents** — font (separate font for Arabic), size, line spacing, margins, justify, remove
   empty paragraphs, right-to-left on Arabic paragraphs.
 - **Extract tables to Excel**, **Extract text**.
+- **Excel tables to Word** — every sheet of an Excel or CSV file as a formatted table in a new Word
+  document. No template needed; Arabic tables read right to left, wide tables get landscape pages.
 - **Convert Word to PDF** through LibreOffice (free) or, on Windows, Microsoft Word.
 
 Old `.doc` files are not supported (save them as `.docx`).

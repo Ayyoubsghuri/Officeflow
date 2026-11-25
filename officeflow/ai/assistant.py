@@ -83,6 +83,9 @@ Rules:
 - Values are text: "true"/"false" for switches, digits for numbers, one of the listed choices for choice settings.
   Regular expressions use Python syntax; put one pattern per line in multiline settings.
 - Keep workflows as short as the task allows. Prefer tools that keep original files untouched (no "move").
+- Prefer tools that need nothing from the user beyond the input files. Use a tool that needs a template or another
+  file (for example word.generate) only when the user says they have one; to put tables into Word use
+  pdf.tables_word or word.from_excel, which need no template.
 - If the task needs something no tool can do, list it in missing_tools (name, description, reads, writes) and build
   the rest of the workflow around it if that is still useful; an empty steps list is acceptable.
 - name: a short workflow name. explanation: 2-5 sentences in the user's language: what each step does and anything
