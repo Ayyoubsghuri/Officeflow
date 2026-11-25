@@ -14,6 +14,7 @@ const NAV = [
   { href: "/toolbox/?cat=excel", label: "Excel Toolbox", icon: "excel", match: "excel" },
   { href: "/toolbox/?cat=pdf", label: "PDF Toolbox", icon: "pdf", match: "pdf" },
   { href: "/toolbox/?cat=word", label: "Word Toolbox", icon: "word", match: "word" },
+  { href: "/workflows/", label: "Workflows", icon: "folder" },
   { href: "/workflow/", label: "Workflow Builder", icon: "workflow" },
   { href: "/assistant/", label: "AI Assistant", icon: "sparkle" },
 ];
@@ -42,7 +43,7 @@ function Rail() {
   const isActive = (item: { href: string; match?: string }) => {
     if (item.match) return category === item.match;
     if (item.href === "/") return pathname === "/";
-    return pathname.startsWith(item.href.replace(/\/$/, ""));
+    return pathname === item.href || pathname === item.href.replace(/\/$/, "") || pathname.startsWith(item.href);
   };
   const render = (item: (typeof NAV)[number]) => (
     <Link key={item.href} href={item.href} className={`nav ${isActive(item) ? "active" : ""}`} title={item.label}>

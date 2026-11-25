@@ -86,6 +86,16 @@ class StepBody(BaseModel):
 class WorkflowBody(BaseModel):
     name: str = ""
     steps: list[StepBody] = Field(default_factory=list)
+    folder: str | None = None
+
+
+class FolderBody(BaseModel):
+    folder: str = ""
+
+
+class RenameFolderBody(BaseModel):
+    old: str
+    new: str
 
 
 class JobBody(BaseModel):
@@ -278,19 +288,16 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
     # -- workflows -----------------------------------------------------------
     @app.get("/api/workflows", dependencies=[api])
     def list_workflows() -> list[dict[str, Any]]:
-        db: Database = app.state.db
-        result = []
-        for name in db.list_workflows():
-            data = db.load_workflow(name) or {"steps": []}
-            result.append({"name": name, "steps": [s["op"] for s in data["steps"]]})
-        return result
+        return [{"name": e["name"], "folder": e["folder"], "steps": [s["op"] for s in e["definition"]["steps"]]}
+                for e in sorted(app.state.db.workflow_entries(), key=lambda e: e["name"])]
 
     @app.get("/api/workflows/{name}", dependencies=[api])
     def get_workflow(name: str) -> dict[str, Any]:
         data = app.state.db.load_workflow(name)
         if data is None:
             raise HTTPException(404, f"No workflow named “{name}”.")
-        return data
+        folder = next((e["folder"] for e in app.state.db.workflow_entries() if e["name"] == name), "")
+        return {**data, "folder": folder}
 
     @app.put("/api/workflows", dependencies=[api])
     def save_workflow(body: WorkflowBody) -> dict[str, Any]:
@@ -298,8 +305,78 @@ def create_app(token: str | None = None, dev_origins: list[str] | None = None,
         if not workflow.name:
             raise OperationError("Give the workflow a name before saving it.")
         workflow.validate()
-        app.state.db.save_workflow(workflow.name, workflow.to_dict())
+        folder = None if body.folder is None else clean_folder(body.folder)
+        app.state.db.save_workflow(workflow.name, workflow.to_dict(), folder)
         return workflow.to_dict()
+
+    def clean_folder(folder: str) -> str:
+        parts = [safe_filename(p).strip() for p in folder.replace("\\", "/").split("/") if p.strip()]
+        return "/".join(p for p in parts if p and p != "_")[:200]
+
+    @app.post("/api/workflows/{name}/move", dependencies=[api])
+    def move_workflow(name: str, body: FolderBody) -> dict[str, str]:
+        if app.state.db.load_workflow(name) is None:
+            raise HTTPException(404, f"No workflow named “{name}”.")
+        folder = clean_folder(body.folder)
+        app.state.db.move_workflow(name, folder)
+        return {"name": name, "folder": folder}
+
+    @app.post("/api/folders/rename", dependencies=[api])
+    def rename_folder(body: RenameFolderBody) -> dict[str, str]:
+        new = clean_folder(body.new)
+        if not new:
+            raise OperationError("Give the folder a name.")
+        app.state.db.rename_folder(clean_folder(body.old), new)
+        return {"folder": new}
+
+    @app.get("/api/library", dependencies=[api])
+    def library() -> dict[str, Any]:
+        """Every workflow that can be reused: saved ones (with their folder), workflows that
+        were run without being saved, and workflows proposed by the AI assistant."""
+        db: Database = app.state.db
+        stats = db.target_stats()
+        saved = []
+        names = set()
+        for entry in db.workflow_entries():
+            names.add(entry["name"])
+            stat = stats.get(entry["name"], {})
+            saved.append({"kind": "saved", "key": f"saved:{entry['name']}", "name": entry["name"],
+                          "folder": entry["folder"], "updated_at": entry["updated_at"],
+                          "steps": [step["op"] for step in entry["definition"].get("steps", [])],
+                          "runs": stat.get("runs", 0), "ok": stat.get("ok", 0),
+                          "last_run": stat.get("started_at", ""), "last_status": stat.get("status", ""),
+                          "last_summary": stat.get("summary", "")})
+        recent, seen = [], set()
+        for run in db.list_runs(2000):
+            definition = run.details.get("workflow") if run.kind == "workflow" else None
+            if not definition or run.name in names:
+                continue
+            key = json.dumps(definition, sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            recent.append({"kind": "run", "key": f"run:{run.id}", "name": run.name, "folder": "",
+                           "steps": [step["op"] for step in definition.get("steps", [])], "definition": definition,
+                           "runs": 1, "ok": int(run.status in ("success", "warning")), "last_run": run.started_at,
+                           "last_status": run.status, "last_summary": run.summary})
+            if len(recent) >= 30:
+                break
+        proposals = []
+        for entry in ai.activity(200):
+            answer = entry.get("answer") or {}
+            workflow = answer.get("workflow")
+            if not workflow or not workflow.get("steps") or workflow.get("name") in names:
+                continue
+            key = json.dumps(workflow, sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            proposals.append({"kind": "ai", "key": f"ai:{entry['time']}", "name": workflow.get("name") or "AI workflow",
+                              "folder": "", "steps": [step["op"] for step in workflow["steps"]], "definition": workflow,
+                              "runs": 0, "ok": 0, "last_run": "", "last_status": "", "last_summary": answer.get("explanation", ""),
+                              "proposed_at": entry["time"]})
+        return {"saved": saved, "recent": recent, "ai": proposals,
+                "folders": sorted({e["folder"] for e in saved if e["folder"]})}
 
     @app.delete("/api/workflows/{name}", dependencies=[api])
     def delete_workflow(name: str) -> dict[str, bool]:

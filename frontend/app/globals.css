@@ -389,3 +389,54 @@ a { color: inherit; text-decoration: none; }
 .dot-ok { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
 .spin.dark { border-color: var(--border-strong); border-top-color: var(--accent); }
 .plugin-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2); }
+
+/* ---------- workflow library ---------- */
+.library { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
+.lib-side { padding: 16px; display: flex; flex-direction: column; gap: 12px; position: sticky; top: 0; }
+.lib-search { position: relative; }
+.lib-search svg { position: absolute; left: 12px; top: 11px; color: var(--muted); }
+.lib-search input { padding-left: 38px; }
+.tree { display: flex; flex-direction: column; gap: 2px; }
+.tree-item { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 10px; border-radius: 10px; cursor: pointer; color: var(--muted);
+  border: none; background: none; width: 100%; text-align: left; position: relative; }
+.tree-item:hover { background: var(--surface-2); color: var(--text); }
+.tree-item.on { background: var(--surface-3); color: var(--text); font-weight: 600; }
+.tree-item .count { margin-left: auto; font-size: 12px; min-width: 24px; height: 20px; border-radius: 6px; background: var(--surface-3); display: grid; place-items: center; padding: 0 6px; }
+.tree-item.on .count { background: var(--accent-soft); color: var(--accent-text); }
+.tree-item .guide { position: absolute; left: 0; top: -2px; bottom: 50%; border-left: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); border-bottom-left-radius: 6px; width: 8px; }
+.tree-sep { height: 1px; background: var(--border); margin: 6px 0; }
+.lib-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+.lib-card { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 20px; background: var(--surface);
+  border: 1px solid var(--border); cursor: pointer; text-align: left; transition: border-color .2s, background .2s; }
+.lib-card:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.lib-card .name { font-weight: 700; font-size: 15px; text-align: center; }
+.lib-card .sub { font-size: 12px; color: var(--muted); text-align: center; }
+.lib-card .menu { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; z-index: 2; }
+.lib-card:hover .menu { opacity: 1; }
+.lib-card .menu button { width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); display: grid; place-items: center; cursor: pointer; }
+.lib-card .menu button:hover { border-color: var(--border-strong); }
+.lib-card .pillrow { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.fglyph { position: relative; width: 100%; aspect-ratio: 1.42; }
+.fglyph-back { position: absolute; inset: 8% 4% 0 4%; border-radius: 12px; background: #4a4f55; }
+.fglyph-back::before { content: ""; position: absolute; left: 0; top: -9%; width: 38%; height: 20%; border-radius: 10px 10px 0 0; background: inherit; }
+.fglyph-paper { position: absolute; left: 22%; right: 26%; top: 2%; height: 60%; border-radius: 8px; background: #f4f5f6; transform: rotate(-4deg);
+  box-shadow: 0 4px 12px rgba(0,0,0,.25); padding: 12% 10%; display: flex; flex-direction: column; gap: 9%; }
+.fglyph-paper span { display: block; height: 5px; border-radius: 3px; background: #d5d8dc; }
+.fglyph-paper span:nth-child(2) { width: 70%; } .fglyph-paper span:nth-child(3) { width: 45%; }
+.fglyph-paper.second { left: 34%; right: 18%; top: 6%; transform: rotate(5deg); background: #e6e8ea; padding: 0; z-index: 0; }
+.fglyph-paper:not(.second) { z-index: 1; }
+.fglyph-front { position: absolute; inset: 30% 0 0 0; border-radius: 12px; z-index: 2; background: rgba(150,155,160,.42);
+  border: 1px solid rgba(255,255,255,.22); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); display: flex; align-items: flex-end; padding: 8% 9%; }
+.fglyph-label { color: rgba(255,255,255,.85); font-weight: 600; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.fglyph.tone-green .fglyph-back { background: #1d7a45; } .fglyph.tone-green .fglyph-front { background: rgba(104,231,142,.42); }
+.fglyph.tone-amber .fglyph-back { background: #7a5a1d; } .fglyph.tone-amber .fglyph-front { background: rgba(245,196,81,.38); }
+.fglyph.tone-blue .fglyph-back { background: #24518f; } .fglyph.tone-blue .fglyph-front { background: rgba(79,141,247,.40); }
+[data-theme="light"] .fglyph-back { background: #9aa1a8; }
+[data-theme="light"] .fglyph-front { background: rgba(190,196,202,.55); }
+.lib-empty { padding: 30px; text-align: center; color: var(--muted); display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.folderinput { width: 140px; background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 4px 8px; outline: none;
+  color: var(--muted); font-size: 16px; font-weight: 600; }
+.folderinput:hover { border-color: var(--border); }
+.folderinput:focus { border-color: var(--pink); background: var(--field); color: var(--text); }
+.empty-fan { display: grid; place-items: center; }

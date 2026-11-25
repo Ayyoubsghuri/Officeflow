@@ -50,7 +50,8 @@ try {
   await page.waitForSelector(".fan-card");
   check((await page.$$(".fan-card")).length >= 20, "dashboard shows a folder per tool");
 
-  await page.click(".fan-info");
+  await page.click(".fan-info");                       // opens the selected tool
+  await page.goto(`${base}/tool/?id=pdf.organize`);
   await page.waitForSelector("h1:has-text('PDF Smart Organizer')");
   await page.click("button:has-text('Folder')");
   await page.click("button:has-text('Use this folder')");
@@ -83,9 +84,32 @@ try {
   check((await page.$$(".fmtpill")).length >= 7, "nodes show input and output formats");
 
   await page.fill(".titleinput", "Smoke");
+  await page.fill(".folderinput", "Invoices/2024");
   await page.click(".builder-top button:has-text('Save')");
   await page.waitForSelector(".tag.green:has-text('Saved')");
   check(true, "workflow saved");
+
+  // Workflow library: folders, search, reopen; the dashboard now shows workflows as folders.
+  await page.goto(`${base}/workflows/`);
+  await page.waitForSelector(".tree-item:has-text('Invoices')");
+  check((await page.$$(".tree-item:has-text('2024')")).length === 1, "library shows the folder tree");
+  await page.click(".tree-item:has-text('Invoices')");
+  await page.waitForSelector(".lib-card:has-text('2024')");
+  await page.click(".lib-card:has-text('2024')");
+  await page.waitForSelector(".lib-card:has-text('Smoke')");
+  await page.waitForTimeout(700);
+  await shot(page, "library");
+  await page.fill(".lib-side input", "organizer");
+  await page.waitForSelector("h1:has-text('Results for')");
+  check((await page.$$(".lib-card:has-text('Smoke')")).length === 1, "search finds a workflow by one of its tools");
+  await page.click(".lib-card:has-text('Smoke')");
+  await page.waitForSelector(".flow-node:has-text('PDF Smart Organizer')");
+  check((await page.inputValue(".folderinput")) === "Invoices/2024", "workflow opens from the library with its folder");
+  await page.goto(`${base}/`);
+  await page.waitForSelector(".fan-card");
+  check((await page.textContent(".segmented button.on")).includes("Workflows"), "dashboard shows workflows when there are some");
+  await page.waitForTimeout(800);
+  await shot(page, "dashboard-workflows");
 
   // AI assistant (a fake model stands in for Claude in this test).
   await page.goto(`${base}/settings/`);

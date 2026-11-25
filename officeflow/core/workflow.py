@@ -149,7 +149,8 @@ def run_workflow(
             output_dir=result_dir if result_dir.is_dir() else ctx.output_dir, summary=outcome.summary,
             details={"steps": [{"name": n, "status": o.status, "summary": o.result.summary,
                                 "errors": o.result.errors[:50], "warnings": o.result.warnings[:50]}
-                               for n, o in outcome.steps]},
+                               for n, o in outcome.steps],
+                     "workflow": workflow.to_dict()},       # lets a run be found and reused later
         )
     return outcome
 

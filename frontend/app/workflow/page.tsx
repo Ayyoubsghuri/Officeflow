@@ -55,7 +55,9 @@ function Builder() {
   const [inputs, setInputs] = useState<string[]>([]);
   const [startExts, setStartExts] = useState<string[] | null>(null);
   const [saved, setSaved] = useState<string | null>(null);   // JSON of the saved definition
-  const [savedList, setSavedList] = useState<{ name: string; steps: string[] }[]>([]);
+  const [savedList, setSavedList] = useState<{ name: string; folder: string; steps: string[] }[]>([]);
+  const [folder, setFolder] = useState("");
+  const [savedFolder, setSavedFolder] = useState<string | null>(null);
   const [undo, setUndo] = useState<Snapshot[]>([]);
   const [redo, setRedo] = useState<Snapshot[]>([]);
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; index: number } | null>(null);
@@ -69,7 +71,7 @@ function Builder() {
 
   const ops = useMemo(() => steps.map((s) => find(s.op)).filter(Boolean) as Operation[], [steps, find]);
   const definition = useCallback((): WorkflowDef => ({ name: name.trim(), steps: steps.map((s) => ({ op: s.op, params: s.params })) }), [name, steps]);
-  const isSaved = saved !== null && saved === JSON.stringify(definition());
+  const isSaved = saved !== null && saved === JSON.stringify(definition()) && (savedFolder ?? "") === folder.trim();
 
   useEffect(() => {
     if (settings) {
@@ -78,13 +80,15 @@ function Builder() {
     }
   }, [settings]);
 
-  const reloadList = useCallback(() => api<{ name: string; steps: string[] }[]>("GET", "/api/workflows").then(setSavedList).catch(() => {}), []);
+  const reloadList = useCallback(() => api<{ name: string; folder: string; steps: string[] }[]>("GET", "/api/workflows").then(setSavedList).catch(() => {}), []);
   useEffect(() => { reloadList(); }, [reloadList]);
 
   const load = useCallback(async (workflowName: string) => {
     try {
       const data = await api<WorkflowDef>("GET", `/api/workflows/${encodeURIComponent(workflowName)}`);
       setName(data.name);
+      setFolder(data.folder ?? "");
+      setSavedFolder(data.folder ?? "");
       setSteps(data.steps.map((s) => ({ uid: uid(), op: s.op, params: { ...s.params } })));
       setSaved(JSON.stringify({ name: data.name, steps: data.steps.map((s) => ({ op: s.op, params: s.params })) }));
       setSelected(START);
@@ -105,13 +109,16 @@ function Builder() {
 
   // A workflow proposed by the AI assistant opens here as an unsaved draft.
   useEffect(() => {
-    if (params.get("draft") !== "ai" || !meta) return;
+    const kind = params.get("draft");
+    if (!kind || !meta) return;
     const raw = sessionStorage.getItem("officeflow-ai-draft");
     if (!raw) return;
     sessionStorage.removeItem("officeflow-ai-draft");
     try {
       const draft = JSON.parse(raw) as WorkflowDef;
       setName(draft.name);
+      setFolder("");
+      setSavedFolder(null);
       setSteps(draft.steps.filter((s) => find(s.op)).map((s) => ({ uid: uid(), op: s.op, params: { ...defaults(find(s.op)!.params), ...s.params } })));
       setSaved(null);
       setSelected(START);
@@ -119,7 +126,8 @@ function Builder() {
       setUndo([]);
       setRedo([]);
       setTimeout(() => canvas.current?.fit(), 50);
-      toast("Draft from the AI assistant — review each step, choose the input files, then run or save.");
+      toast(kind === "ai" ? "Draft from the AI assistant — review each step, choose the input files, then run or save."
+        : "Workflow from an earlier run — choose the input files and run it, or save it to keep it in a folder.");
     } catch {
       /* ignore a damaged draft */
     }
@@ -209,16 +217,17 @@ function Builder() {
     try {
       const def = definition();
       if (!def.name) throw new Error("Give the workflow a name (top left) before saving it.");
-      await api("PUT", "/api/workflows", def);
+      await api("PUT", "/api/workflows", { ...def, folder });
       setSaved(JSON.stringify(def));
+      setSavedFolder(folder.trim());
       reloadList();
-      toast(`Workflow “${def.name}” saved.`);
+      toast(`Workflow “${def.name}” saved${folder.trim() ? ` in ${folder.trim()}` : ""}.`);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     }
   };
   const newWorkflow = () => {
-    setName(""); setSteps([]); setSaved(null); setSelected(START); setPositions({}); setUndo([]); setRedo([]); setRunUids([]);
+    setName(""); setFolder(""); setSavedFolder(null); setSteps([]); setSaved(null); setSelected(START); setPositions({}); setUndo([]); setRedo([]); setRunUids([]);
     router.replace("/workflow/");
   };
   const deleteSaved = async () => {
@@ -286,7 +295,11 @@ function Builder() {
   return (
     <div className="builder">
       <div className="builder-top">
-        <button className="btn ghost crumb" onClick={() => router.push("/")}><Icon name="folder" size={18} />Dashboard</button>
+        <button className="btn ghost crumb" onClick={() => router.push("/workflows/")}><Icon name="folder" size={18} />Workflows</button>
+        <span className="crumb">/</span>
+        <input className="folderinput" list="wf-folders" value={folder} placeholder="Folder" title="Folder of this workflow (use / for sub-folders)"
+          onChange={(e) => setFolder(e.target.value)} />
+        <datalist id="wf-folders">{[...new Set(savedList.map((w) => w.folder).filter(Boolean))].map((f) => <option key={f} value={f} />)}</datalist>
         <span className="crumb">/</span>
         <span className="flow-tile kind-start small"><Icon name="workflow" size={16} /></span>
         <input className="titleinput" value={name} placeholder="Untitled workflow" onChange={(e) => setName(e.target.value)} />
@@ -294,7 +307,11 @@ function Builder() {
         <div className="grow" />
         <select className="select" style={{ width: 220 }} value="" onChange={(e) => e.target.value && load(e.target.value)}>
           <option value="">Open a saved workflow…</option>
-          {savedList.map((w) => <option key={w.name} value={w.name}>{w.name} ({w.steps.length} steps)</option>)}
+          {[...new Set(savedList.map((w) => w.folder))].sort().map((f) => (
+            <optgroup key={f || "-"} label={f || "Not in a folder"}>
+              {savedList.filter((w) => w.folder === f).map((w) => <option key={w.name} value={w.name}>{w.name} ({w.steps.length} steps)</option>)}
+            </optgroup>
+          ))}
         </select>
         <button className="btn pink" onClick={() => router.push("/assistant/?mode=workflow")} title="Describe a workflow and let the AI build it">
           <Icon name="sparkle" size={17} />Ask AI</button>

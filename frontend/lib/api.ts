@@ -191,6 +191,7 @@ export interface WorkflowStep {
 export interface WorkflowDef {
   name: string;
   steps: WorkflowStep[];
+  folder?: string;
 }
 
 export interface FolderListing {
@@ -278,4 +279,27 @@ export function watchJob(id: string, onUpdate: (job: JobState) => void): () => v
 export function reportError(message: string, stack = ""): void {
   if (typeof window === "undefined") return;
   api("POST", "/api/client-error", { message, stack, page: window.location.pathname + window.location.search }).catch(() => {});
+}
+
+export interface LibraryEntry {
+  kind: "saved" | "run" | "ai";
+  key: string;
+  name: string;
+  folder: string;
+  steps: string[];
+  definition?: WorkflowDef;
+  runs: number;
+  ok: number;
+  last_run: string;
+  last_status: string;
+  last_summary: string;
+  updated_at?: string;
+  proposed_at?: string;
+}
+
+export interface Library {
+  saved: LibraryEntry[];
+  recent: LibraryEntry[];
+  ai: LibraryEntry[];
+  folders: string[];
 }

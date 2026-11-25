@@ -132,6 +132,14 @@ relying on them.
 - **Workflow Builder** — see below. **History**, **Logs**, **Settings** (theme, output folder, plugins,
   PDF converter status).
 
+### Workflows library
+Every workflow you can reuse is a folder: workflows you saved, workflows you ran without saving, and workflows
+proposed by the AI assistant. The **Workflows** page has a folder tree with search (by name, folder or any
+tool the workflow uses), folder cards, and a *Recently run* table; click a workflow to open it ready to run.
+Put a workflow in a folder with the **Folder** field next to its name in the builder (use `/` for
+sub-folders, e.g. `Invoices/2024`), move it from its card, or rename a whole folder. On the dashboard the 3D
+folder stack shows your workflows (switch to **Tools** for the tools), with the same search.
+
 ### Workflow Builder
 A node canvas in the style of the second design reference. A **Files & folders** start node feeds the
 first step, and each step passes its output files to the next.

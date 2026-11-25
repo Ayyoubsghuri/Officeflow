@@ -7,7 +7,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import Icon from "./Icon";
 import type { Operation, Run, TargetStat } from "@/lib/api";
-import { family, formats } from "@/lib/formats";
+import { formats } from "@/lib/formats";
 
 export function when(iso: string): { ago: string; date: string; time: string } {
   const date = new Date(iso);
@@ -19,9 +19,32 @@ export function when(iso: string): { ago: string; date: string; time: string } {
 
 const STATUS: Record<string, string> = { success: "Done", warning: "With remarks", failed: "Failed", cancelled: "Cancelled" };
 
-export default function Deck({ op, stat, runs, workflows, onOpen, onOpenRun, onOpenWorkflow, onNewRun }: {
-  op: Operation | undefined;
-  stat: TargetStat | undefined;
+/** What the green folder shows: a tool or a workflow. */
+export interface DeckSubject {
+  key: string;
+  title: string;
+  icon: string;
+  reads: string;
+  writes: string;
+  detail: string;            // second line of the file row
+  summary: string;           // last result, or a description
+  runs: number;
+  ok: number;
+  lastRun: string;
+  lastStatus: string;
+  openLabel: string;
+}
+
+export function toolSubject(op: Operation, stat: TargetStat | undefined): DeckSubject {
+  return {
+    key: op.id, title: op.name, icon: op.category, reads: formats(op.input_extensions), writes: formats(op.output_extensions),
+    detail: op.input_label, summary: stat ? stat.summary : op.description, runs: stat?.runs ?? 0, ok: stat?.ok ?? 0,
+    lastRun: stat?.started_at ?? "", lastStatus: stat?.status ?? "", openLabel: "Open tool",
+  };
+}
+
+export default function Deck({ subject, runs, workflows, onOpen, onOpenRun, onOpenWorkflow, onNewRun }: {
+  subject: DeckSubject | undefined;
   runs: Run[];
   workflows: { name: string; steps: string[] }[];
   onOpen(): void;
@@ -29,8 +52,9 @@ export default function Deck({ op, stat, runs, workflows, onOpen, onOpenRun, onO
   onOpenWorkflow(name: string): void;
   onNewRun(): void;
 }) {
-  const rate = stat ? Math.round((100 * stat.ok) / stat.runs) : 0;
-  const sheets = op ? [...new Set([...op.input_extensions, ...op.output_extensions].map(family))].slice(0, 3) : [];
+  const op = subject;
+  const rate = op && op.runs ? Math.round((100 * op.ok) / op.runs) : 0;
+  const sheets = op ? [...new Set([...op.reads.split(" · "), ...op.writes.split(" · ")])].slice(0, 3) : [];
   while (sheets.length < 3) sheets.push(["Preview", "Report", "Log"][sheets.length]);
   return (
     <div className="deck">
@@ -81,7 +105,7 @@ export default function Deck({ op, stat, runs, workflows, onOpen, onOpenRun, onO
 
       <AnimatePresence mode="wait">
         {op && (
-          <motion.div key={op.id} className="deck-folder" initial={{ y: 26, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+          <motion.div key={op.key} className="deck-folder" initial={{ y: 26, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
             exit={{ y: 16, opacity: 0 }} transition={{ type: "spring", stiffness: 260, damping: 26 }}>
             <div className="deck-sheets">
               {sheets.map((name, i) => (
@@ -92,7 +116,7 @@ export default function Deck({ op, stat, runs, workflows, onOpen, onOpenRun, onO
                     {i === 2 && <span className="deck-q"><Icon name="question" size={13} /></span>}
                   </div>
                   <div style={{ fontSize: 9, opacity: .7, marginTop: 8 }}>{i === 0 ? "Reads" : i === 1 ? "Writes" : "Creates"}</div>
-                  <div style={{ fontSize: 11, fontWeight: 700 }}>{i === 0 ? formats(op.input_extensions) : i === 1 ? formats(op.output_extensions) : "Report"}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700 }}>{i === 0 ? op.reads : i === 1 ? op.writes : "Report"}</div>
                 </motion.div>
               ))}
             </div>
@@ -107,32 +131,32 @@ export default function Deck({ op, stat, runs, workflows, onOpen, onOpenRun, onO
             <div className="deck-folder-body">
               <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
-                  <div className="deck-title">{op.name}</div>
+                  <div className="deck-title">{op.title}</div>
                   <div className="deck-sub">Recent activity</div>
                 </div>
-                <button className="btn white" onClick={onOpen}><Icon name="arrow" size={16} />Open tool</button>
+                <button className="btn white" onClick={onOpen}><Icon name="arrow" size={16} />{op.openLabel}</button>
               </div>
               <div className="deck-timeline">
                 <div className="row" style={{ justifyContent: "space-between", fontSize: 12 }}>
-                  <span>{stat ? `${stat.runs} run${stat.runs > 1 ? "s" : ""} · ${when(stat.started_at).ago}` : "Not used yet"}</span>
-                  <span>{stat ? `${rate}% completed` : "Preview first"}</span>
+                  <span>{op.runs ? `${op.runs} run${op.runs > 1 ? "s" : ""} · ${when(op.lastRun).ago}` : "Not used yet"}</span>
+                  <span>{op.runs ? `${rate}% completed` : op.icon === "workflow" ? "Not run yet" : "Preview first"}</span>
                 </div>
                 <div className="deck-line">
-                  <motion.div className="deck-line-done" initial={{ width: 0 }} animate={{ width: `${stat ? rate : 0}%` }} />
-                  <motion.span className="deck-marker" initial={{ left: 0 }} animate={{ left: `${stat ? rate : 0}%` }} />
+                  <motion.div className="deck-line-done" initial={{ width: 0 }} animate={{ width: `${op.runs ? rate : 0}%` }} />
+                  <motion.span className="deck-marker" initial={{ left: 0 }} animate={{ left: `${op.runs ? rate : 0}%` }} />
                 </div>
               </div>
               <div className="deck-file">
-                <span className="deck-file-icon"><Icon name={op.category} size={16} /></span>
+                <span className="deck-file-icon"><Icon name={op.icon} size={16} /></span>
                 <div className="grow">
-                  <div className="ellipsis" style={{ fontWeight: 600 }}>{formats(op.input_extensions)} → {formats(op.output_extensions)}</div>
-                  <div className="ellipsis" style={{ fontSize: 12, opacity: .8 }}>{op.input_label}</div>
+                  <div className="ellipsis" style={{ fontWeight: 600 }}>{op.reads} → {op.writes}</div>
+                  <div className="ellipsis" style={{ fontSize: 12, opacity: .8 }}>{op.detail}</div>
                 </div>
               </div>
               <div className="deck-row">
-                <span className="deck-row-icon"><Icon name={stat?.status === "failed" ? "x" : "check"} size={15} /></span>
-                <div className="grow ellipsis">{stat ? stat.summary : op.description}</div>
-                {stat && <span className="deck-time">{when(stat.started_at).time}</span>}
+                <span className="deck-row-icon"><Icon name={op.lastStatus === "failed" ? "x" : "check"} size={15} /></span>
+                <div className="grow ellipsis">{op.summary}</div>
+                {op.lastRun && <span className="deck-time">{when(op.lastRun).time}</span>}
               </div>
             </div>
           </motion.div>

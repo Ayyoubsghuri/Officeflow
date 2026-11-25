@@ -61,6 +61,9 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         with self._lock, self._conn:
             self._conn.executescript(_SCHEMA)
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(workflows)")}
+            if "folder" not in columns:   # databases created before folders existed
+                self._conn.execute("ALTER TABLE workflows ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self._conn.close()
@@ -127,15 +130,35 @@ class Database:
             self._conn.execute("DELETE FROM runs")
 
     # -- workflows -------------------------------------------------------
-    def save_workflow(self, name: str, definition: dict[str, Any]) -> None:
+    def save_workflow(self, name: str, definition: dict[str, Any], folder: str | None = None) -> None:
+        """Save or update a workflow. ``folder=None`` keeps the folder it is already in."""
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO workflows (name, definition, updated_at) VALUES (?,?,?)"
+                "INSERT INTO workflows (name, definition, updated_at, folder) VALUES (?,?,?,?)"
                 " ON CONFLICT(name) DO UPDATE SET definition=excluded.definition,"
-                " updated_at=excluded.updated_at",
+                " updated_at=excluded.updated_at"
+                + (", folder=excluded.folder" if folder is not None else ""),
                 (name, json.dumps(definition, ensure_ascii=False),
-                 datetime.now().isoformat(timespec="seconds")),
+                 datetime.now().isoformat(timespec="seconds"), (folder or "").strip()),
             )
+
+    def workflow_entries(self) -> list[dict[str, Any]]:
+        """Saved workflows with their folder and last change."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT name, folder, definition, updated_at FROM workflows ORDER BY folder, name").fetchall()
+        return [{"name": r["name"], "folder": r["folder"], "updated_at": r["updated_at"],
+                 "definition": json.loads(r["definition"])} for r in rows]
+
+    def move_workflow(self, name: str, folder: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE workflows SET folder=? WHERE name=?", (folder.strip(), name))
+
+    def rename_folder(self, old: str, new: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE workflows SET folder=? WHERE folder=?", (new.strip(), old))
+            self._conn.execute("UPDATE workflows SET folder=? || substr(folder, ?) WHERE folder LIKE ?",
+                               (new.strip(), len(old) + 1, old + "/%"))
 
     def list_workflows(self) -> list[str]:
         with self._lock:

@@ -83,7 +83,7 @@ def test_workflow_job_and_saved_workflows(client, tmp_path):
                                           {"op": "excel.remove_duplicates", "params": {"columns": "Ref"}}]}
     assert client.put("/api/workflows", json=workflow).status_code == 200
     assert client.get("/api/workflows").json() == [
-        {"name": "Tidy", "steps": ["excel.clean", "excel.remove_duplicates"]}]
+        {"name": "Tidy", "folder": "", "steps": ["excel.clean", "excel.remove_duplicates"]}]
     job = client.post("/api/jobs", json={"mode": "workflow", "workflow": workflow, "inputs": [str(tmp_path / "in")],
                                          "output_dir": str(tmp_path / "out")}).json()
     state = wait(client, job)
@@ -148,3 +148,48 @@ def test_interface_errors_are_written_to_the_log(client):
     client.post("/api/client-error", json={"message": "TypeError: x is undefined", "page": "/settings/", "stack": "at y"})
     lines = "\n".join(client.get("/api/logs?level=errors").json()["lines"])
     assert "Interface error on /settings/: TypeError: x is undefined" in lines
+
+
+def test_library_lists_saved_run_and_ai_workflows_in_folders(client, tmp_path):
+    from officeflow.ai import assistant as ai
+
+    make_xlsx(tmp_path / "in" / "a.xlsx", [{"Ref": "A"}])
+    tidy = {"name": "Tidy", "folder": "Clients/2024", "steps": [{"op": "excel.clean"}]}
+    client.put("/api/workflows", json=tidy)
+    client.put("/api/workflows", json={"name": "Text", "folder": "Invoices", "steps": [{"op": "pdf.text"}]})
+    # run the saved one, plus a workflow that was never saved
+    for workflow in (tidy, {"name": "Quick report", "steps": [{"op": "excel.report"}]}):
+        wait(client, client.post("/api/jobs", json={"mode": "workflow", "workflow": workflow,
+                                                    "inputs": [str(tmp_path / "in")], "output_dir": str(tmp_path / "out")}).json())
+    ai.record("workflow", "anthropic/claude-opus-5-5", "x", "workflow", {}, {
+        "kind": "workflow", "name": "Sort", "workflow": {"name": "Sort", "steps": [{"op": "pdf.organize", "params": {}}]}})
+    library = client.get("/api/library").json()
+    saved = {e["name"]: e for e in library["saved"]}
+    assert saved["Tidy"]["folder"] == "Clients/2024" and saved["Tidy"]["runs"] == 1 and saved["Tidy"]["ok"] == 1
+    assert saved["Text"]["runs"] == 0 and library["folders"] == ["Clients/2024", "Invoices"]
+    assert [(e["name"], e["steps"]) for e in library["recent"]] == [("Quick report", ["excel.report"])]
+    assert library["recent"][0]["definition"]["steps"][0]["op"] == "excel.report"
+    assert [(e["name"], e["steps"]) for e in library["ai"]] == [("Sort", ["pdf.organize"])]
+
+    # saving again without a folder keeps it where it is; moving and renaming folders
+    client.put("/api/workflows", json={"name": "Tidy", "steps": [{"op": "excel.clean"}]})
+    assert client.get("/api/workflows/Tidy").json()["folder"] == "Clients/2024"
+    client.post("/api/workflows/Text/move", json={"folder": "Clients"})
+    client.post("/api/folders/rename", json={"old": "Clients", "new": "Customers"})
+    folders = {e["name"]: e["folder"] for e in client.get("/api/library").json()["saved"]}
+    assert folders == {"Tidy": "Customers/2024", "Text": "Customers"}
+    assert client.post("/api/workflows/Nope/move", json={"folder": "x"}).status_code == 404
+
+
+def test_database_from_before_folders_is_upgraded(tmp_path):
+    import sqlite3
+
+    from officeflow.services.database import Database
+
+    old = tmp_path / "old.db"
+    with sqlite3.connect(old) as conn:
+        conn.execute("CREATE TABLE workflows (name TEXT PRIMARY KEY, definition TEXT NOT NULL, updated_at TEXT NOT NULL)")
+        conn.execute("INSERT INTO workflows VALUES ('Old', '{\"name\": \"Old\", \"steps\": []}', '2026-01-01')")
+    db = Database(old)
+    assert db.workflow_entries()[0]["folder"] == "" and db.load_workflow("Old")["name"] == "Old"
+    db.close()
